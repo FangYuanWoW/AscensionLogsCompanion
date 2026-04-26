@@ -1,0 +1,33 @@
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# WoW-specific
+*.bak
+*.old
+
+# Build artifacts
+dist/
+release/
+*.zip
+
+# Local test output
+ALC_Probe_Results*.lua
+debug-*.txt
+
+# Never commit anything with the internal identity
+.env
+.env.local
+
+# Local-only files (contain personal/dev paths, not for public release)
+SETUP.md
+scripts/
+.githooks/

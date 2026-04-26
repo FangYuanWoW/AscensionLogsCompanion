@@ -1,0 +1,46 @@
+## Interface: 30300
+## Title: |cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r
+## Notes: Inspects gear, talents, and mystic enchants per encounter for ascensionlogs.gg. Auto-inspects the raid in the background.
+## Author: FangYuanWoW
+## Version: 0.1.1
+## SavedVariables: ALC_Config, ALC_Peers
+## SavedVariablesPerCharacter: ALC_LocalState, ALC_SessionLog, ALC_InspectCache
+## OptionalDeps: Ace3
+
+embeds.xml
+
+Core\Namespace.lua
+Core\Constants.lua
+Core\Logger.lua
+Core\Queue.lua
+Core\Serialize.lua
+Core\Base64.lua
+Core\Hash.lua
+Core\Metrics.lua
+
+Capture\LocalScan.lua
+Capture\MysticEnchantScan.lua
+Capture\CAOScan.lua
+Capture\GearScan.lua
+Capture\InspectCache.lua
+Capture\EncounterTracker.lua
+Capture\InspectLoop.lua
+Capture\SnapshotPipeline.lua
+
+Transport\AddonChannel.lua
+Transport\SpellFailedHijack.lua
+Transport\SavedVarFlush.lua
+
+Zone\DefaultZones.lua
+Zone\BossRegistry.lua
+Zone\ZoneMonitor.lua
+
+Parser\Session.lua
+Parser\EncounterDetector.lua
+
+UI\SettingsFrame.xml
+UI\SettingsFrame.lua
+UI\MinimapButton.lua
+UI\SlashCommand.lua
+
+Init.lua
