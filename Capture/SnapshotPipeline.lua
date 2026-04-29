@@ -26,15 +26,46 @@ local function shouldPublish()
     return true
 end
 
+-- Per-session monotonic snapshot counter. Bumps each time we slice a CI
+-- into chunks, giving every snapshot a unique short ID that the demuxer
+-- can use to group its chunks together regardless of how the encounter
+-- detector splits them in time. Encoded in base36 (0-9 a-z) for byte
+-- thrift in the chunk header. Covered the v1 → v2 envelope bump.
+P.snapshotCounter = P.snapshotCounter or 0
+
+-- Encode a non-negative integer as base36, lower-case, no padding.
+-- 1-9999 fits in 1-3 chars; covers an entire raid session comfortably.
+local function toBase36(n)
+    if n == 0 then return "0" end
+    local digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    local out = ""
+    local x = n
+    while x > 0 do
+        local r = x - math.floor(x / 36) * 36
+        out = digits:sub(r + 1, r + 1) .. out
+        x = math.floor(x / 36)
+    end
+    return out
+end
+
 -- Build the chunk wrapper around a raw payload string.
--- Format: [[ALC_CI_v1_<sessionId>_<guid>_<seq>/<total>]]<b64>
-local function buildChunk(sessionId, guid, seq, total, b64payload)
-    return string.format("[[ALC_CI_v1_%s_%s_%d/%d]]%s",
-        sessionId, guid, seq, total, b64payload)
+-- Format: [[ALC_CI_v2_<sessionId>_<guid>_<snapshotId>_<seq>/<total>]]<b64>
+-- snapshotId is a per-session monotonic counter in base36; the same value
+-- stamps every chunk of one snapshot. The demuxer groups chunks by
+-- (session, guid, snapshotId), so chunks of one snapshot can never mix
+-- with another's even when they straddle an encounter boundary.
+local function buildChunk(sessionId, guid, snapshotId, seq, total, b64payload)
+    return string.format("[[ALC_CI_v2_%s_%s_%s_%d/%d]]%s",
+        sessionId, guid, snapshotId, seq, total, b64payload)
 end
 
 -- Slice a base64 payload into chunks sized to fit the fail-reason field.
+-- All chunks of one snapshot share the same snapshotId so the demuxer
+-- can reassemble them as one unit on the server side.
 local function chunkPayload(sessionId, guid, b64)
+    P.snapshotCounter = (P.snapshotCounter or 0) + 1
+    local snapshotId = toBase36(P.snapshotCounter)
+
     local maxBody = C.CHUNK_PAYLOAD_MAX_BYTES
     local total = math.ceil(#b64 / maxBody)
     if total < 1 then total = 1 end
@@ -42,7 +73,7 @@ local function chunkPayload(sessionId, guid, b64)
     for seq = 1, total do
         local startIdx = (seq - 1) * maxBody + 1
         local endIdx = math.min(startIdx + maxBody - 1, #b64)
-        chunks[seq] = buildChunk(sessionId, guid, seq, total, b64:sub(startIdx, endIdx))
+        chunks[seq] = buildChunk(sessionId, guid, snapshotId, seq, total, b64:sub(startIdx, endIdx))
     end
     return chunks
 end

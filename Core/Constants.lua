@@ -7,14 +7,19 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
-C.VERSION = "0.1.8"
+C.VERSION = "0.1.9"
 C.SCHEMA_VERSION = 2
 
 -- Addon channel
 C.ADDON_PREFIX = "ALC"
 
--- CI sentinel (precomputed prefix; full sentinel built per chunk)
-C.CI_SENTINEL_PREFIX = "[[ALC_CI_v1_"
+-- CI sentinel (precomputed prefix; full sentinel built per chunk).
+-- Bumped to v2 in 0.1.9: chunk header now carries a per-snapshot ID so
+-- the server-side demuxer can group chunks by snapshot regardless of
+-- encounter boundary, eliminating the cross-snapshot Frankenstein decode
+-- class of bugs (see report 7980 for the smoking-gun case). Backend
+-- accepts both v1 and v2 sentinels during the rollout window.
+C.CI_SENTINEL_PREFIX = "[[ALC_CI_v2_"
 C.CI_SENTINEL_SUFFIX = "]]"
 
 -- Inspect timings
