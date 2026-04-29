@@ -165,7 +165,7 @@ function L.buildLocalCI(sessionId)
         arena_teams = arenaTeams(),
         pet = petInfo(),
         instance = instanceInfo(),
-        transmog_viewing = transmogViewing(),  -- v0.3.1: logger's "show transmog" setting; gates capture quality interpretation on the backend
+        transmog_viewing = transmogViewing(),  -- v0.2.5: logger's "show transmog" setting; gates capture quality interpretation on the backend
     }
 
     if isAscension then
