@@ -19,13 +19,7 @@ ALC.Zone.ZoneMonitor = Z
 
 Z.lastLoggedZone = nil
 Z.startedByUs = false
-Z.popupShownForZone = nil  -- track which zone we popped for, to avoid re-spam
--- Tracks zones the user explicitly declined via the "Do Not Log" button
--- on the start popup. Per-Lua-session (cleared on /reload). Without this,
--- a sub-zone change (e.g. walking deeper into MC) or a zone-out + zone-back
--- would silently re-trigger startLogging because Z.lastLoggedZone gets
--- cleared on the decline. Bug reported by e_shikari and reproed by FangYuanWoW.
-Z.userDeclinedForZone = {}
+Z.popupShownForZone = nil  -- track which zone we popped for, to avoid re-spam within the same visit
 
 -- Popup shown when leaving a monitored zone where ALC started logging.
 -- Asks before stopping rather than auto-stopping, since players often
@@ -75,26 +69,22 @@ StaticPopupDialogs["ALC_COMBATLOG_STARTED"] = {
         -- User wants to keep logging; nothing to do, addon already started it
     end,
     OnCancel = function()
-        -- User declined; stop logging and remember to skip auto-start for this zone
+        -- User declined for this entry. Stop logging, fully reset state so
+        -- the next zone-in to a monitored zone shows a fresh popup. We do
+        -- NOT remember the decline across zone-out + zone-back-in - the
+        -- intent is "ask me every time I come back," not "never log this
+        -- zone for the rest of the session." (v0.2.3's main-zone-only
+        -- registration ensures sub-zone walks within the same visit don't
+        -- re-fire the popup, so per-entry semantics are safe.)
         if LoggingCombat() then
             SlashCmdList["COMBATLOG"]("")
             if ALC.Core.Logger then
                 ALC.Core.Logger.info("Logging stopped at user request.")
             end
         end
-        -- Mark this zone as user-declined for the rest of the Lua session.
-        -- Sub-zone events, zone-out-and-back, and any other zone fire while
-        -- this entry is set will skip startLogging entirely. To re-enable
-        -- auto-logging, /reload (or manually /combatlog on - that path
-        -- doesn't go through us, so it works fine).
-        if Z.lastLoggedZone then
-            Z.userDeclinedForZone[Z.lastLoggedZone] = true
-            if ALC.Core.Logger and ALC.Core.Logger.debug then
-                ALC.Core.Logger.debug("User declined auto-logging for: " .. Z.lastLoggedZone)
-            end
-        end
         Z.startedByUs = false
         Z.lastLoggedZone = nil
+        Z.popupShownForZone = nil  -- so re-entry to a monitored zone re-prompts
     end,
     OnAlt = function()
         -- Third button: hide transmog (preserves spell-visuals state) and
@@ -242,11 +232,6 @@ function Z.check(isMainZoneChange)
     local silent = _G.ALC_Config and ALC_Config.silent_auto_logging
 
     if monitored and Z.lastLoggedZone ~= zone then
-        -- Skip auto-start if the user explicitly declined for this zone
-        -- earlier in the session via the "Do Not Log" popup button. Without
-        -- this gate, sub-zone events and zone-out-and-back loops would
-        -- silently re-trigger logging despite the user's stated preference.
-        if Z.userDeclinedForZone[zone] then return end
         -- In silent mode, suppress the start popup. Logging still starts.
         startLogging(zone, isMainZoneChange and not silent)
     elseif not monitored and Z.lastLoggedZone and Z.startedByUs and isMainZoneChange and not silent then
