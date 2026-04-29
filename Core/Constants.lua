@@ -7,7 +7,7 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
-C.VERSION = "0.2.0"
+C.VERSION = "0.2.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity. Forces an inspect-cache wipe on
@@ -95,5 +95,4 @@ C.DEFAULT_CONFIG = {
     is_logger = true,
     silent_auto_logging = false,  -- skip both start + stop popups; logging stays on across zone changes until user manually toggles
     log_dungeons = true,          -- when off, auto-/combatlog only fires for raids (instanceType=="raid"), skipping 5-man dungeons
-    vanity_capture_enabled = true,  -- when false, skip the vanity-divergence poll entirely (saves baseline CPU for users who don't care about transmog data)
 }

@@ -189,6 +189,12 @@ function L.buildInspectCI(unit, sessionId)
         player = {
             guid = UnitGUID(unit),
             name = UnitName(unit),
+            -- Inspector and inspected peer are guaranteed same-realm by
+            -- CanInspect's same-realm constraint, so the logger's
+            -- GetRealmName() answers for the peer too. Saves us from
+            -- needing a per-peer realm fetch (which doesn't exist as an
+            -- inspect-time API anyway).
+            realm = GetRealmName(),
             race = raceToken,
             class = classToken,
             gender = UnitSex(unit),

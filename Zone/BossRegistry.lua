@@ -37,7 +37,9 @@ B.BY_ZONE["Zul'Gurub"] = {
 }
 B.BY_ZONE["Onyxia's Lair"] = {
     "Onyxia",
-    "Basalthane",  -- Ascension-custom addition
+    "Basalthane",          -- Ascension-custom addition
+    "Ortorg the Ardent",   -- Epoch (Project Epoch) Phase 1 addition
+    "Atressian",           -- Epoch (Project Epoch) Phase 1 addition
 }
 -- Scarlet Monastery (5-man, dev fixture for Phase 2 ingestion testing).
 -- Captured combat log: 2026-04-25-12.51.56 WoWCombatLog.txt
@@ -189,6 +191,7 @@ B.BY_ZONE["World Bosses"] = {
     "The Will of Soggoth",
     "Taerar",
     "Ysondre",
+    "Volchan",  -- Epoch (Project Epoch) Phase 1 world boss
 }
 
 --------------------------------------------------------------------------------

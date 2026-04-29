@@ -54,9 +54,6 @@ local resolveUnit
 -- VANITY_POLL_MAX_ATTEMPTS. Stops if config disables vanity capture or
 -- if we lose the unit.
 local function vanityPoll(guid)
-    local cfg = _G.ALC_Config
-    if cfg and cfg.vanity_capture_enabled == false then return end
-
     local entry = ALC.Capture.InspectCache.get(guid)
     if not entry or not entry.ci or not entry.ci.gear then return end
     if entry.vanity_check_attempts == nil then return end  -- divergence already found, or aborted
@@ -114,8 +111,6 @@ end
 
 -- Public entry point so finalizeInspect can request a poll.
 function I.scheduleVanityPoll(guid)
-    local cfg = _G.ALC_Config
-    if cfg and cfg.vanity_capture_enabled == false then return end
     if _G.C_Timer and C_Timer.After then
         C_Timer.After(C.VANITY_POLL_INTERVAL_S, function() vanityPoll(guid) end)
     end
