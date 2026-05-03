@@ -7,7 +7,7 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
-C.VERSION = "0.30.4"
+C.VERSION = "0.30.6"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

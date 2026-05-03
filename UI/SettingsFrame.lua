@@ -296,7 +296,7 @@ function UI.create()
     makeCheckbox(settingsPage, "Show minimap icon", 4, -372,
         function()
             return not (_G.ALC_Config and ALC_Config.minimap_button
-                        and ALC_Config.minimap_button.hidden)
+                        and ALC_Config.minimap_button.hide)
         end,
         function(v)
             if v then
