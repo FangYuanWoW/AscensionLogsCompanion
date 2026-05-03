@@ -60,20 +60,24 @@ local function buildTooltip(tt)
     tt:AddLine("|cffaaaaaaDrag:|r reposition")
 end
 
--- Soft green glow ring around the icon when /combatlog is on. Reuses
--- Blizzard's CheckButtonGlow so the glow matches the engine's idiom for
--- "this control is active". WoW 3.3.5 doesn't fire an event when /combatlog
--- toggles, so a 1Hz OnUpdate poll is the cheapest correct path.
+-- Soft green ring around the icon when /combatlog is on. Reuses Blizzard's
+-- MiniMap-TrackingBorder (the same texture LibDBIcon draws as the round
+-- frame around the icon) so the glow follows the button's circular shape
+-- instead of looking like a square halo. Drawn slightly larger than the
+-- LibDBIcon overlay (53×53 → 60×60) and ADD-blended so it reads as a
+-- bloom on top of the existing border. WoW 3.3.5 doesn't fire an event
+-- when /combatlog toggles, so a 1Hz OnUpdate poll is the cheapest correct
+-- path.
 local function attachLoggingIndicator(btn)
     if not btn or btn.alc_recOverlay then return end
 
     local glow = btn:CreateTexture(nil, "OVERLAY")
     glow:SetDrawLayer("OVERLAY", 7)
-    glow:SetTexture("Interface\\Buttons\\CheckButtonGlow")
+    glow:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     glow:SetBlendMode("ADD")
     glow:SetVertexColor(0.30, 1.00, 0.35, 0.95)
-    glow:SetSize(50, 50)
-    glow:SetPoint("CENTER", btn, "CENTER", 0, 0)
+    glow:SetSize(60, 60)
+    glow:SetPoint("TOPLEFT", btn, "TOPLEFT", -4, 4)
     glow:Hide()
     btn.alc_recOverlay = glow
 
