@@ -33,6 +33,10 @@ local function migrateConfig()
     return mb
 end
 
+local function isLogging()
+    return type(LoggingCombat) == "function" and LoggingCombat() and true or false
+end
+
 local function buildTooltip(tt)
     local metrics = ALC.Core.Metrics and ALC.Core.Metrics.counters or {}
     local cache = _G.ALC_InspectCache or {}
@@ -40,6 +44,10 @@ local function buildTooltip(tt)
     for _ in pairs(cache) do nCache = nCache + 1 end
     tt:AddLine("|cff00ff00Ascension Logs Companion|r")
     tt:AddLine("v" .. ALC.Core.Constants.VERSION, 0.7, 0.7, 0.7)
+    tt:AddLine(" ")
+    tt:AddDoubleLine("/combatlog",
+        isLogging() and "|cff33ff33RECORDING|r" or "|cff888888off|r",
+        1, 1, 1)
     tt:AddLine(" ")
     tt:AddDoubleLine("Players inspected", tostring(metrics.inspect_success or 0), 1, 1, 1, 0.4, 1, 0.4)
     tt:AddDoubleLine("Players cached",    tostring(nCache),                       1, 1, 1, 1, 1, 1)
@@ -50,6 +58,36 @@ local function buildTooltip(tt)
     tt:AddLine(" ")
     tt:AddLine("|cffaaaaaaClick:|r open settings")
     tt:AddLine("|cffaaaaaaDrag:|r reposition")
+end
+
+-- Soft green glow ring around the icon when /combatlog is on. Reuses
+-- Blizzard's CheckButtonGlow so the glow matches the engine's idiom for
+-- "this control is active". WoW 3.3.5 doesn't fire an event when /combatlog
+-- toggles, so a 1Hz OnUpdate poll is the cheapest correct path.
+local function attachLoggingIndicator(btn)
+    if not btn or btn.alc_recOverlay then return end
+
+    local glow = btn:CreateTexture(nil, "OVERLAY")
+    glow:SetDrawLayer("OVERLAY", 7)
+    glow:SetTexture("Interface\\Buttons\\CheckButtonGlow")
+    glow:SetBlendMode("ADD")
+    glow:SetVertexColor(0.30, 1.00, 0.35, 0.95)
+    glow:SetSize(50, 50)
+    glow:SetPoint("CENTER", btn, "CENTER", 0, 0)
+    glow:Hide()
+    btn.alc_recOverlay = glow
+
+    local poller = CreateFrame("Frame", nil, btn)
+    poller.elapsed = 0
+    poller:SetScript("OnUpdate", function(self, elapsed)
+        self.elapsed = self.elapsed + elapsed
+        if self.elapsed < 1.0 then return end
+        self.elapsed = 0
+        if isLogging() then glow:Show() else glow:Hide() end
+    end)
+    btn.alc_recPoller = poller
+
+    if isLogging() then glow:Show() end
 end
 
 function M.start()
@@ -102,6 +140,7 @@ function M.start()
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
     end
+    attachLoggingIndicator(btn)
 end
 
 function M.hide()
@@ -128,4 +167,5 @@ function M.show()
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
     end
+    attachLoggingIndicator(btn)
 end
