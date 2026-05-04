@@ -2,15 +2,32 @@
 -- Reads equipped gear for a unit. Works for "player" and inspected units.
 -- Post-inspect 200ms gear populate delay is handled by the caller (InspectLoop).
 --
--- Vanity capture (2026-04-26): on Ascension, GetInventoryItemLink returns the
--- REAL underlying item, while GetInventoryItemID returns the VISIBLE vanity /
--- transmog appearance (when one is applied). Verified on Barry:
---   link=216939 = "Dragonstalker's Helm"   (real item Barry actually wears)
---   id  =941102 = "Jewel of the Firelord"  (vanity overlay on character model)
+-- Overlay capture: both Ascension and Epoch expose transmog through a per-slot
+-- divergence between GetInventoryItemLink and GetInventoryItemID. Orientation
+-- is consistent across both servers: link = REAL underlying (drives stats,
+-- ilvl, armory), id = VISIBLE overlay (or a sentinel marking "hide slot").
 --
--- We capture item_id from the link (real) and ALSO capture vanity_item_id
--- from GetInventoryItemID when it differs, so the report can show both sides
--- and we can validate this assumption across many real captures.
+--   Ascension (verified 2026-04-26 on Barry):
+--     link = 216939 "Dragonstalker's Helm"     real item Barry wears
+--     id   = 941102 "Jewel of the Firelord"    vanity overlay drawn on him
+--
+--   Epoch (verified 2026-05-03 on Matchusmashu via /eprobe inspect-gear-deep):
+--     Mode A (transmog'd to a different visible item — slot 3 shoulders):
+--       link = 90939 "Rival's Plated Spaulders"   real item
+--       id   = 62435 "Tralak's Shoulderguard"     visual overlay
+--     Mode B (transmog'd to "hide / naked" — slot 5 chest, slot 9 wrists):
+--       link = 90940 "Rival's Plated Breast"      real item
+--       id   = 1                                  sentinel: hide / show as empty
+--
+-- We always treat the link side as canonical (entry.item_id) so the armory
+-- gets the real underlying gear regardless of what visual the player chose.
+-- The id side becomes vanity_item_id when it diverges from the link, except
+-- for Epoch's Mode B sentinel (id == 1) which is filtered out — there's no
+-- real item there, just a "show as hidden" instruction.
+--
+-- The 2026-04-28 probe finding ("zero divergence on Epoch") was wrong — that
+-- probe ran on un-transmog'd peers. Confirmed via Matchusmashu where 3/19
+-- slots diverge.
 
 local ALC = _G.ALC
 local G = {}
@@ -68,38 +85,39 @@ function G.readGear(unit)
                     unique = parsed.unique,
                     raw = parsed.raw,
                 }
-                -- Vanity overlay (Ascension only). Epoch's 2026-04-28 probe
-                -- confirmed zero divergence between GetInventoryItemLink and
-                -- GetInventoryItemID across all populated slots, and
-                -- C_VanityCollection doesn't exist there. Skipping the
-                -- whole block on non-Ascension keeps the snapshot clean and
-                -- avoids burning inspect-loop budget on no-op divergence
-                -- checks.
-                if ALC.Profile == nil or ALC.Profile == "ascension" then
-                    -- Vanity overlay: when GetInventoryItemID differs from the
-                    -- link's item_id, the player has a transmog applied. Record
-                    -- the appearance ID so the report can render both. Most
-                    -- slots will not diverge.
-                    if GetInventoryItemID then
-                        local appearanceId = GetInventoryItemID(unit, slot)
-                        if appearanceId and appearanceId ~= parsed.item_id then
-                            entry.vanity_item_id = appearanceId
-                        end
+                -- Vanity overlay divergence: when GetInventoryItemID differs
+                -- from the link's item_id, the player has a transmog applied.
+                -- Record the appearance ID so the report can show both sides.
+                -- Most slots won't diverge. Runs on both servers (orientation
+                -- is consistent: link = real, id = visible overlay).
+                --
+                -- Epoch sentinel filter (id == 1): Epoch's transmog lets a
+                -- player set a slot to "hide / naked", in which case
+                -- GetInventoryItemID returns the literal value 1. That's a
+                -- "show as empty" instruction, not a real item id, so don't
+                -- store it as vanity_item_id. The link side still carries
+                -- the real underlying item, captured above as item_id.
+                if GetInventoryItemID then
+                    local appearanceId = GetInventoryItemID(unit, slot)
+                    if appearanceId and appearanceId > 1
+                       and appearanceId ~= parsed.item_id then
+                        entry.vanity_item_id = appearanceId
                     end
-                    -- Vanity-detection flag: independent of divergence, check
-                    -- whether the captured item_id itself is registered in
-                    -- Ascension's vanity collection. When both link and
-                    -- GetInventoryItemID return the same vanity ID (the
-                    -- "fully-poisoned" peer state), divergence is invisible
-                    -- but C_VanityCollection.GetItem still recognizes it.
-                    -- Backend can flag is_vanity=true slots as suspect.
-                    if _G.C_VanityCollection
-                       and type(C_VanityCollection.GetItem) == "function"
-                       and parsed.item_id and parsed.item_id > 0 then
-                        local ok, rec = pcall(C_VanityCollection.GetItem, parsed.item_id)
-                        if ok and rec then
-                            entry.is_vanity = true
-                        end
+                end
+
+                -- Ascension-only: vanity-detection flag via C_VanityCollection.
+                -- Independent of divergence — catches the "fully-poisoned"
+                -- peer state where both link and GetInventoryItemID return
+                -- the same vanity id, so divergence is invisible. The
+                -- C_VanityCollection namespace doesn't exist on Epoch
+                -- (probe-confirmed), so the entire block is BB-only.
+                if (ALC.Profile == nil or ALC.Profile == "ascension")
+                   and _G.C_VanityCollection
+                   and type(C_VanityCollection.GetItem) == "function"
+                   and parsed.item_id and parsed.item_id > 0 then
+                    local ok, rec = pcall(C_VanityCollection.GetItem, parsed.item_id)
+                    if ok and rec then
+                        entry.is_vanity = true
                     end
                 end
                 gear[#gear + 1] = entry
