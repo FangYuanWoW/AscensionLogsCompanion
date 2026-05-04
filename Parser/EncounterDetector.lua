@@ -29,10 +29,6 @@ end
 
 local function onRegenEnabled()
     if E.inEncounter then
-        local endTs = time() * 1000
-        if ALC.Transport.SavedVarFlush then
-            ALC.Transport.SavedVarFlush.flushEncounter(endTs)
-        end
         E.inEncounter = false
         E.encounterStartTs = nil
     end

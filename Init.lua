@@ -4,6 +4,21 @@
 local ALC = _G.ALC
 
 local function boot()
+    -- Reclaim memory from the deprecated ALC_SessionLog SavedVariable. It
+    -- was write-only fallback persistence that nothing on the addon side
+    -- or backend side ever read, but it grew unbounded for 30 days
+    -- (~290 KB per encounter * many encounters per session) and on heavy
+    -- raiders pushed the Lua VM past its allocation cap mid-combat,
+    -- producing "memory allocation error: block too big" on inspect-side
+    -- handlers. WoW's SavedVariables loader still dofile()s the existing
+    -- on-disk blob into _G.ALC_SessionLog before our addon boots, so we
+    -- nil it here to let the GC reclaim it immediately. The variable is
+    -- no longer declared in the .toc, so on next save WoW writes only
+    -- the still-declared variables and the bloat drops off disk too.
+    -- Safe to remove this block in a future version once we're confident
+    -- everyone has cycled through one save with 0.30.13+.
+    _G.ALC_SessionLog = nil
+
     -- Seed config with defaults
     _G.ALC_Config = _G.ALC_Config or {}
     for k, v in pairs(ALC.Core.Constants.DEFAULT_CONFIG) do
