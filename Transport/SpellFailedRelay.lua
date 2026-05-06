@@ -209,39 +209,87 @@ local function installUIErrorSuppressor()
     end
 end
 
--- Taint error suppressor (added 0.40.0): silently drop the
--- "AddOn 'AscensionLogsCompanion' tainted the call of the secure function
--- 'UNKNOWN()'" Lua errors that fire when a hold-to-cast user (e.g. bear
--- druids hammering Maul/Swipe through cooldowns via button-held key
--- repeat) reads a chunk-loaded SPELL_FAILED_* global through the secure
--- cast path. The taint is inherent to the CLEU-hijack transport and
--- eager-restore already shrinks the exposure window to the in-progress
--- flush duration; this hook just hides the cosmetic ScriptErrorsFrame
--- popup. Chunks still land in WoWCombatLog.txt and reassemble
--- server-side - suppression happens strictly downstream of CLEU
--- emission. Filter is scoped to "AscensionLogsCompanion" attribution so
--- other addons' bugs surface normally.
-local function installTaintErrorSuppressor()
-    if H._taintErrorHandlerInstalled then return end
-    local origHandler = geterrorhandler()
-    seterrorhandler(function(msg)
+-- Build a filter wrapper around an inner error handler. The wrapper
+-- silently drops "AddOn 'AscensionLogsCompanion' tainted the call of the
+-- secure function ..." Lua errors and forwards everything else to the
+-- inner handler. Used by installTaintErrorSuppressor.
+local function buildFilteredHandler(inner)
+    return function(msg)
         if type(msg) == "string"
            and msg:find("AscensionLogsCompanion", 1, true)
            and msg:find("tainted the call", 1, true) then
             ALC.Core.Metrics.inc("taint_errors_suppressed")
             return
         end
-        if origHandler then return origHandler(msg) end
-    end)
-    H._taintErrorHandlerInstalled = true
+        if inner then return inner(msg) end
+    end
 end
 
--- Taint popup suppressor (added 0.40.0): companion to the error-handler
--- hook above. If cumulative taint promotes to the modal
--- ADDON_ACTION_FORBIDDEN / ADDON_ACTION_BLOCKED dialog (rather than the
--- yellow ScriptErrorsFrame variant), this catches it. The dialog's data
--- arg carries the offending addon name; only auto-dismiss when it matches
--- ours. Other addons' modals remain untouched.
+-- Taint error suppressor (added 0.40.0, hardened 0.41.1). Drops the
+-- "AddOn 'AscensionLogsCompanion' tainted the call of the secure function
+-- ..." Lua errors that fire when a hold-to-cast user (e.g. bear druids
+-- hammering Maul/Swipe through cooldowns via button-held key repeat)
+-- reads a chunk-loaded SPELL_FAILED_* global through the secure cast
+-- path. The taint is inherent to the CLEU-hijack transport and eager-
+-- restore already shrinks the exposure window to the in-progress flush
+-- duration; this hook just hides the cosmetic surface. Chunks still
+-- land in WoWCombatLog.txt and reassemble server-side - suppression
+-- happens strictly downstream of CLEU emission.
+--
+-- 0.40.0 wrapped geterrorhandler() once at relay-start. That worked on
+-- vanilla setups but lost the wrapper as soon as a later-loading error
+-- handler addon (BugSack, !BugGrabber, ErrorHandler) called
+-- seterrorhandler(itsHandler) - the engine kept their handler and
+-- dropped our wrapper, so the taint error landed in their UI without
+-- our filter. 0.41.1: hook seterrorhandler itself so any future caller
+-- ends up with our filter wrapping their handler regardless of load
+-- order.
+local function installTaintErrorSuppressor()
+    if H._taintErrorHandlerInstalled then return end
+    H._taintErrorHandlerInstalled = true
+
+    -- Wrap whichever handler is active right now.
+    seterrorhandler(buildFilteredHandler(geterrorhandler()))
+
+    -- Replace seterrorhandler so any later caller implicitly chains our
+    -- filter on top of their handler. Stays idempotent across repeated
+    -- calls (each rebuild keeps our filter on the outside).
+    local origSetErrorHandler = seterrorhandler
+    seterrorhandler = function(newHandler)
+        return origSetErrorHandler(buildFilteredHandler(newHandler))
+    end
+end
+
+-- True when the popup is the ALC-attributed taint dialog. 3.3.5's
+-- ADDON_ACTION_BLOCKED is triggered as StaticPopup_Show(which, addonName)
+-- where addonName lands in text_arg1, NOT the `data` arg, so checking
+-- only `data` (as 0.40.0 did) misses every engine-triggered taint popup.
+-- The rendered text always contains the addon name regardless of which
+-- slot the caller used, so match against that as well.
+local function alcMatchesPopup(self, data)
+    if data == "AscensionLogsCompanion" then return true end
+    if self and self.text and self.text.GetText then
+        local txt = self.text:GetText()
+        if txt and txt:find("AscensionLogsCompanion", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Taint popup suppressor (added 0.40.0, hardened 0.41.1). Companion to
+-- the error-handler hook above. If cumulative taint promotes to the
+-- modal ADDON_ACTION_FORBIDDEN / ADDON_ACTION_BLOCKED dialog rather
+-- than the inline ScriptErrorsFrame variant, this catches it.
+--
+-- 0.41.1 changes:
+--   1. OnShow override now also matches the popup's rendered text
+--      (alcMatchesPopup) so engine-triggered taint popups - which carry
+--      the addon name in text_arg1 rather than `data` - are caught.
+--   2. Belt-and-suspenders hooksecurefunc on StaticPopup_Show calls
+--      StaticPopup_Hide immediately when which is ADDON_ACTION_FORBIDDEN
+--      or ADDON_ACTION_BLOCKED and text_arg1 is ours. This survives any
+--      later override of the OnShow handler on the dialog template.
 local function installTaintPopupSuppressor()
     if not _G.StaticPopupDialogs then return end
     for _, dlgKey in ipairs({"ADDON_ACTION_FORBIDDEN", "ADDON_ACTION_BLOCKED"}) do
@@ -249,7 +297,7 @@ local function installTaintPopupSuppressor()
         if t and not t._alc_hooked then
             local origOnShow = t.OnShow
             t.OnShow = function(self, data)
-                if data == "AscensionLogsCompanion" then
+                if alcMatchesPopup(self, data) then
                     self:Hide()
                     ALC.Core.Metrics.inc("taint_popups_suppressed")
                     return
@@ -258,6 +306,23 @@ local function installTaintPopupSuppressor()
             end
             t._alc_hooked = true
         end
+    end
+
+    -- Fallback that survives any later override of t.OnShow on the
+    -- templates above. Fires after the engine's StaticPopup_Show, so
+    -- the dialog briefly appears and is then auto-hidden on the same
+    -- frame. Counter is not incremented here to avoid double-counting
+    -- with the OnShow path; if our OnShow override is bypassed and only
+    -- this fallback hides the popup, the taint_popups_suppressed metric
+    -- will under-count slightly. Acceptable trade for a diagnostic.
+    if not H._taintPopupShowHooked and type(_G.StaticPopup_Show) == "function" then
+        hooksecurefunc("StaticPopup_Show", function(which, text_arg1)
+            if (which == "ADDON_ACTION_FORBIDDEN" or which == "ADDON_ACTION_BLOCKED")
+               and text_arg1 == "AscensionLogsCompanion" then
+                StaticPopup_Hide(which)
+            end
+        end)
+        H._taintPopupShowHooked = true
     end
 end
 
