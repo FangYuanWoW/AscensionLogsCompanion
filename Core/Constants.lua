@@ -7,7 +7,7 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
-C.VERSION = "0.40.1"
+C.VERSION = "0.41.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -188,10 +188,16 @@ C.INSPECT_FLIP_DELAY_S = 0.4
 C.VANITY_POLL_MAX_ATTEMPTS = 8
 C.VANITY_POLL_INTERVAL_S = 1.0
 
--- Peers per OnUpdate frame when draining the deferred publish queue. With
--- 60fps and a 25-man raid that's 24 peers / 2 per frame = 12 frames =
--- ~200ms to drain the queue, vs ~1s synchronous burn before. Tunable.
-C.PEERS_PER_DEFER_FRAME = 2
+-- Peers per OnUpdate frame when draining the deferred publish queue.
+-- 0.41.0: dropped from 2 to 1. At 2 peers/frame the per-frame compression
+-- cost was ~100ms (2 x ~50ms LibDeflate), which is ~6 dropped frames at
+-- 60fps and still felt as a stutter on average hardware. At 1 peer/frame
+-- the per-frame cost is ~50ms (~3 dropped frames), wall-time drain for
+-- 25 cached peers grows from ~200ms to ~400ms, but the engine stays
+-- responsive enough that input is not blocked. This is now also the
+-- periodic 30s republish path, so per-frame smoothness matters more than
+-- total drain wall-time.
+C.PEERS_PER_DEFER_FRAME = 1
 
 -- Defaults for config
 C.DEFAULT_CONFIG = {

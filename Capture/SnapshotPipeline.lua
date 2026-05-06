@@ -330,15 +330,22 @@ function P.start()
         P.publishAllDeferred()
     end)
     -- Periodic peer republish: 30s tick (best-effort; 3.3.5 may lack C_Timer).
-    -- This path stays synchronous because the cost is amortized across 30s
-    -- of headroom and doesn't coincide with a combat-start frame.
+    -- 0.41.0: switched from synchronous publishPeerInspects() to the deferred
+    -- variant. The earlier "amortized across 30s of headroom" reasoning was
+    -- wrong: amortization changes how often the freeze fires, not the per-tick
+    -- peak. With ~17 cached peers in a Molten Core 40-man (Bronzebeard report
+    -- 2026-05-05) the synchronous tick was producing a ~600ms hard freeze
+    -- every 30s, landing on trash pulls and mid-fight casts. The deferred
+    -- variant spreads the same compression work across ~25 frames, so the
+    -- per-frame budget hit is small enough to feel like stutter rather than a
+    -- locked client.
     if _G.C_Timer and C_Timer.NewTicker then
-        C_Timer.NewTicker(30.0, P.publishPeerInspects)
+        C_Timer.NewTicker(30.0, P.publishPeerInspectsDeferred)
     else
         local accum = 0
         ALC.frame:HookScript("OnUpdate", function(self, el)
             accum = accum + el
-            if accum >= 30.0 then accum = 0; P.publishPeerInspects() end
+            if accum >= 30.0 then accum = 0; P.publishPeerInspectsDeferred() end
         end)
     end
 
