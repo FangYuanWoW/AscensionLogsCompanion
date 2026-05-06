@@ -333,7 +333,7 @@ function P.start()
     -- 0.41.0: switched from synchronous publishPeerInspects() to the deferred
     -- variant. The earlier "amortized across 30s of headroom" reasoning was
     -- wrong: amortization changes how often the freeze fires, not the per-tick
-    -- peak. With ~17 cached peers in a Molten Core 40-man (Bronzebeard report
+    -- peak. With ~17 cached peers in a Molten Core raid (Bronzebeard report
     -- 2026-05-05) the synchronous tick was producing a ~600ms hard freeze
     -- every 30s, landing on trash pulls and mid-fight casts. The deferred
     -- variant spreads the same compression work across ~25 frames, so the
