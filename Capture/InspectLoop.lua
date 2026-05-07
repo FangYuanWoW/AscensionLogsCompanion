@@ -12,9 +12,50 @@ local C = ALC.Core.Constants
 I.inFlight = nil       -- { guid = ..., started_at = ... }
 I.lastTickAt = 0
 I.ticker = nil         -- OnUpdate handler
+I.unitByGuid = {}      -- GUID -> unit token ("raidN"/"partyN"/"player")
+I.rosterGuids = {}     -- stable roster GUID list used by pickNext rule 1
 
 local function now()
     return GetTime()
+end
+
+-- Rebuild GUID->unit and roster-guid indices from current roster state.
+-- This avoids repeated UnitGUID("raidN"/"partyN") scans on every inspect tick.
+local function rebuildUnitIndex()
+    local byGuid = {}
+    local roster = {}
+    local seenRoster = {}
+    local selfGuid = UnitGUID("player")
+    if selfGuid then
+        byGuid[selfGuid] = "player"
+    end
+
+    for i = 1, (GetNumRaidMembers() or 0) do
+        local u = "raid" .. i
+        local guid = UnitGUID(u)
+        if guid then
+            byGuid[guid] = u
+            if guid ~= selfGuid and not seenRoster[guid] then
+                roster[#roster + 1] = guid
+                seenRoster[guid] = true
+            end
+        end
+    end
+
+    for i = 1, (GetNumPartyMembers() or 0) do
+        local u = "party" .. i
+        local guid = UnitGUID(u)
+        if guid then
+            byGuid[guid] = u
+            if guid ~= selfGuid and not seenRoster[guid] then
+                roster[#roster + 1] = guid
+                seenRoster[guid] = true
+            end
+        end
+    end
+
+    I.unitByGuid = byGuid
+    I.rosterGuids = roster
 end
 
 -- Transmog-visibility gate. When the user has C_Appearance.SetCanSeeAppearances
@@ -715,6 +756,8 @@ local function tick()
 end
 
 function I.onRosterChange()
+    rebuildUnitIndex()
+
     -- Purge entries for players no longer in group (raid + party).
     -- UnitGUID("player") can transiently return nil during a raid disband
     -- (PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE fire mid-transition).
@@ -742,6 +785,8 @@ end
 
 -- Event wiring
 function I.start()
+    rebuildUnitIndex()
+
     ALC.RegisterEvent("INSPECT_TALENT_READY", onInspectReady)
     if ALC.Profile ~= "epoch" then
         -- Ascension-specific inspect-result events. We treat any payload as
