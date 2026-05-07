@@ -205,6 +205,41 @@ end
 -- spread across ~12 frames at 60fps for a 25-man.
 P.deferQueue = nil
 
+local function ensureDeferQueue()
+    if P.deferQueue then return P.deferQueue end
+    P.deferQueue = {
+        items = {},
+        head = 1,
+        tail = 0,
+    }
+    return P.deferQueue
+end
+
+local function deferQueueSize(q)
+    if not q or q.tail < q.head then return 0 end
+    return q.tail - q.head + 1
+end
+
+local function deferEnqueue(item)
+    local q = ensureDeferQueue()
+    q.tail = q.tail + 1
+    q.items[q.tail] = item
+end
+
+local function deferDequeue()
+    local q = P.deferQueue
+    if not q or q.tail < q.head then return nil end
+    local item = q.items[q.head]
+    q.items[q.head] = nil
+    q.head = q.head + 1
+    if q.head > q.tail then
+        -- Queue fully drained; reset indices to keep integer growth bounded.
+        q.head = 1
+        q.tail = 0
+    end
+    return item
+end
+
 -- Build the work queue. Cheap (no compression). The actual serialization
 -- happens during drain.
 function P.publishPeerInspectsDeferred()
@@ -216,7 +251,6 @@ function P.publishPeerInspectsDeferred()
     local currentBoss   = tracker and tracker.getCurrentBoss() or nil
     local currentPullId = tracker and tracker.getCurrentPullId() or 0
 
-    P.deferQueue = P.deferQueue or {}
     local queued = 0
     for guid, entry in pairs(cache) do
         if entry.ci and entry.last_success_at then
@@ -224,12 +258,12 @@ function P.publishPeerInspectsDeferred()
                         .. ":" .. tostring(currentPullId)
             if P.lastPeerEnqueued[key] ~= true then
                 P.lastPeerEnqueued[key] = true  -- mark now so subsequent calls don't double-queue
-                P.deferQueue[#P.deferQueue + 1] = {
+                deferEnqueue({
                     guid = guid,
                     entry = entry,
                     currentBoss = currentBoss,
                     currentPullId = currentPullId,
-                }
+                })
                 queued = queued + 1
             end
         end
@@ -243,12 +277,12 @@ end
 -- Drain at most PEERS_PER_DEFER_FRAME entries; called every OnUpdate frame.
 local function drainDeferQueue()
     local queue = P.deferQueue
-    if not queue or #queue == 0 then return end
+    if not queue or deferQueueSize(queue) == 0 then return end
     local budget = C.PEERS_PER_DEFER_FRAME or 2
     local drained = 0
     for _ = 1, budget do
-        if #queue == 0 then break end
-        local item = table.remove(queue, 1)
+        local item = deferDequeue()
+        if not item then break end
         if item and item.entry and item.entry.ci then
             if item.currentBoss then
                 item.entry.ci.captured_for_boss    = item.currentBoss
