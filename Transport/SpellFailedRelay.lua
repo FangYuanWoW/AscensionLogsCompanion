@@ -8,14 +8,16 @@
 -- on scope exit. UIErrorsFrame hook suppresses sentinel strings from
 -- leaking into the red-text overlay.
 --
--- Landed-evidence gating (added 0.30.1): the queue head only advances when
--- the next SPELL_CAST_FAILED's failedType arg starts with CI_SENTINEL_PREFIX,
--- which proves the previously-applied chunk was the string the engine read
--- and therefore landed in WoWCombatLog.txt. If failedType is anything else
--- (uncovered Lua global, or a C-side string like "Not enough rage" /
--- "Not enough energy" that bypasses _G entirely), the same chunk stays at
--- the head and gets re-applied on the next event. Prevents the silent
--- chunk-loss class observed on bear druids in 2026-04-30-22.53.58.
+-- Landed-evidence gating (added 0.30.1; family-generalized 0.42.0): the queue
+-- head only advances when the next SPELL_CAST_FAILED's failedType arg starts
+-- with RELAY_FAMILY_PREFIX (currently "[[ALC_"), which proves the previously-
+-- applied chunk was the string the engine read and therefore landed in
+-- WoWCombatLog.txt. If failedType is anything else (uncovered Lua global,
+-- or a C-side string like "Not enough rage" / "Not enough energy" that
+-- bypasses _G entirely), the same chunk stays at the head and gets
+-- re-applied on the next event. Matching the family prefix instead of the
+-- CI-specific prefix lets the same gating work for CI ([[ALC_CI_v2_...) and
+-- PP ([[ALC_PP_v1_...) chunks alike since the transport is family-agnostic.
 
 local ALC = _G.ALC
 local H = {}
@@ -149,7 +151,8 @@ function H.onSpellCastFailed(failedType)
     end
 
     -- Landed-evidence check: did the prior chunk make it into the log?
-    local prefix = C.CI_SENTINEL_PREFIX
+    -- Match the family prefix so both CI and PP chunks land-detect correctly.
+    local prefix = C.RELAY_FAMILY_PREFIX
     local landed = H.pendingChunk
         and type(failedType) == "string"
         and failedType:sub(1, #prefix) == prefix
@@ -195,12 +198,13 @@ function H.reevaluate()
     end
 end
 
--- UIErrorsFrame hook: silent-drop any message starting with our sentinel
+-- UIErrorsFrame hook: silent-drop any message starting with our family prefix
+-- (matches CI and PP chunks alike; any future chunk family inherits suppression).
 local function installUIErrorSuppressor()
     if UIErrorsFrame and not UIErrorsFrame._alc_hooked then
         local orig = UIErrorsFrame.AddMessage
         UIErrorsFrame.AddMessage = function(self, msg, ...)
-            if type(msg) == "string" and msg:sub(1, #C.CI_SENTINEL_PREFIX) == C.CI_SENTINEL_PREFIX then
+            if type(msg) == "string" and msg:sub(1, #C.RELAY_FAMILY_PREFIX) == C.RELAY_FAMILY_PREFIX then
                 return
             end
             return orig(self, msg, ...)
@@ -347,7 +351,7 @@ function H.start()
 
     -- Hook into combat log event for SPELL_CAST_FAILED triggering. Pull
     -- failedType from the documented CLEU arg index so the gating check
-    -- can compare it against CI_SENTINEL_PREFIX.
+    -- can compare it against RELAY_FAMILY_PREFIX.
     ALC.RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function(event, ...)
         local _, subEvent = ...
         if subEvent == "SPELL_CAST_FAILED" then

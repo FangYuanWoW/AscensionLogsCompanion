@@ -62,6 +62,12 @@ local function boot()
     safeStart("VersionCheck", ALC.Transport.VersionCheck)
     safeStart("InspectLoop", ALC.Capture.InspectLoop)
     safeStart("SnapshotPipeline", ALC.Capture.SnapshotPipeline)
+    safeStart("PetPipeline", ALC.Capture.PetPipeline)
+    -- PetTracker MUST start after SnapshotPipeline so its PLAYER_REGEN_DISABLED
+    -- handler is registered (and thus fires) AFTER SnapshotPipeline's, which
+    -- calls SpellFailedRelay.clearQueue() at pull-start. PetTracker enqueues
+    -- the fresh pet-pair sweep into the now-empty queue.
+    safeStart("PetTracker", ALC.Capture.PetTracker)
     safeStart("MinimapButton", ALC.UI.MinimapButton)
 
     ALC.Core.Logger.info("|cff00ff00Ascension Logs Companion|r v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/alc|r for settings.")

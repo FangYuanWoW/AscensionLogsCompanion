@@ -7,7 +7,14 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
-C.VERSION = "0.41.1"
+-- 0.42.0: new PP chunk family for ground-truth {owner, pet} GUID pairs
+-- captured from the controlled-pet unit slots (raidNpet / partyNpet / pet).
+-- Rides the existing SpellFailedRelay transport with a distinct envelope
+-- ([[ALC_PP_v1_...]]) so the server parser can route pet pairs independently
+-- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
+-- generalized to match the family prefix [[ALC_ so both chunk families
+-- transit cleanly through the same SPELL_CAST_FAILED hijack.
+C.VERSION = "0.42.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -41,6 +48,26 @@ C.ADDON_PREFIX = "ALC"
 -- accepts both v1 and v2 sentinels during the rollout window.
 C.CI_SENTINEL_PREFIX = "[[ALC_CI_v2_"
 C.CI_SENTINEL_SUFFIX = "]]"
+
+-- Pet-pair (PP) chunk envelope. Parallel family to CI, carried by the same
+-- SpellFailedRelay transport but routed to a different server-side demuxer.
+-- Body shape: { v=1, session_id, captured_for_boss, captured_for_pull_id,
+-- pairs = { {o=<ownerGuid>, p=<petGuid>}, ... } }
+-- Format: [[ALC_PP_v<schema>_<sessionId>_<snapshotId>_<seq>/<total>]]<b64>
+C.PP_SENTINEL_PREFIX = "[[ALC_PP_v1_"
+C.PP_SCHEMA_VERSION  = 1
+
+-- Family prefix shared by all ALC chunk envelopes (CI, PP, any future
+-- family). Used by:
+--   - SpellFailedRelay landed-evidence check: confirms the prior chunk landed
+--     in WoWCombatLog.txt by matching failedType against the family prefix
+--     (any ALC-family chunk landing is sufficient evidence).
+--   - UIErrorsFrame suppressor: silent-drop any red-text message starting
+--     with the family prefix so chunks landing on uncovered fail-reason
+--     globals don't leak into the user's UI.
+-- Kept short so any future v3+ CI or v2+ PP family bumps don't require
+-- updating two suppressors in lockstep.
+C.RELAY_FAMILY_PREFIX = "[[ALC_"
 
 -- Inspect timings
 C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebeard via /alcprobe throttle-blast 1.0: 24/24 fires got replies, 0% server-throttled. 25-man cold cycle: 48s → 24s. Legacy fallback when ALC.Profile is unset.
@@ -105,7 +132,7 @@ C.RELAY_FAILEDTYPE_ARG_INDEX = 12
 -- These account for ~76% of chunk-loss events. The structural fix is the
 -- landed-evidence gating in SpellFailedRelay.onSpellCastFailed, which uses
 -- RELAY_FAILEDTYPE_ARG_INDEX above to read failedType and confirm the prior
--- chunk landed via CI_SENTINEL_PREFIX match before advancing the queue.
+-- chunk landed via RELAY_FAMILY_PREFIX match before advancing the queue.
 -- Globals list expansion below is a complement, not a substitute, for the
 -- gating fix.
 C.RELAY_FAIL_GLOBALS = {
@@ -208,4 +235,5 @@ C.DEFAULT_CONFIG = {
     is_logger = true,
     silent_auto_logging = false,  -- skip both start + stop popups; logging stays on across zone changes until user manually toggles
     log_dungeons = true,          -- when off, auto-/combatlog only fires for raids (instanceType=="raid"), skipping 5-man dungeons
+    pet_tracking_enabled = true,  -- 0.42.0: PP chunk emission for {owner, pet} GUID pairs from controlled-pet unit slots
 }
