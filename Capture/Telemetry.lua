@@ -14,7 +14,7 @@
 -- produces 4-6 chunks per snapshot. Throttled by TELEMETRY_QUEUE_SKIP_AT_CHUNKS
 -- so a backlogged relay can't snowball into more chunks.
 --
--- Efficiency notes (vs the original DacianoB draft):
+-- Efficiency notes:
 --   * npc_id parsed once per GUID, memoized on the monster entry itself
 --   * roster static fields (name/class/level) cached and invalidated on
 --     roster events, so we don't re-call UnitClass/UnitName/UnitLevel
