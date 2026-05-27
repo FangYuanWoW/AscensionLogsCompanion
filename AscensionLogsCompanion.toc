@@ -30,6 +30,7 @@ Capture\InspectLoop.lua
 Capture\SnapshotPipeline.lua
 Capture\PetPipeline.lua
 Capture\PetTracker.lua
+Capture\Telemetry.lua
 
 Transport\AddonChannel.lua
 Transport\SpellFailedRelay.lua

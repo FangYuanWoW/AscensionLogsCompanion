@@ -68,6 +68,11 @@ local function boot()
     -- calls SpellFailedRelay.clearQueue() at pull-start. PetTracker enqueues
     -- the fresh pet-pair sweep into the now-empty queue.
     safeStart("PetTracker", ALC.Capture.PetTracker)
+    -- Telemetry boots last among capture modules. It only emits while
+    -- combat-logging in a raid/party instance and gates on relay queue
+    -- depth, so it's safe to run alongside CI + PP transit on the same
+    -- SpellFailedRelay.
+    safeStart("Telemetry", ALC.Capture.Telemetry)
     safeStart("MinimapButton", ALC.UI.MinimapButton)
 
     ALC.Core.Logger.info("|cff00ff00Ascension Logs Companion|r v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/alc|r for settings.")

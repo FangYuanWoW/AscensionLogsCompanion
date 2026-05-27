@@ -62,7 +62,7 @@ C.CI_SENTINEL_SUFFIX = "]]"
 C.PP_SENTINEL_PREFIX = "[[ALC_PP_v1_"
 C.PP_SCHEMA_VERSION  = 1
 
--- Family prefix shared by all ALC chunk envelopes (CI, PP, any future
+-- Family prefix shared by all ALC chunk envelopes (CI, PP, TS, any future
 -- family). Used by:
 --   - SpellFailedRelay landed-evidence check: confirms the prior chunk landed
 --     in WoWCombatLog.txt by matching failedType against the family prefix
@@ -73,6 +73,17 @@ C.PP_SCHEMA_VERSION  = 1
 -- Kept short so any future v3+ CI or v2+ PP family bumps don't require
 -- updating two suppressors in lockstep.
 C.RELAY_FAMILY_PREFIX = "[[ALC_"
+
+-- Telemetry (TS) chunk envelope. Third family, parallel to CI and PP.
+-- Carries periodic encounter telemetry (player positions + vitals + targets
+-- + hostile NPC ledger) through the same SpellFailedRelay transport.
+-- Body shape: { schema_version=1, addon_version, stream="telemetry",
+--   event_type, session_id, snapshot_id, captured_at, captured_by_guid,
+--   server, reason, encounter, map, units=[...], monsters=[...] }
+-- Format: [[ALC_TS_v1_<sessionId>_<snapshotId>_<seq>/<total>]]<b64>
+-- Local experiment as of 0.42.1: schema not yet consumed server-side.
+C.TS_SENTINEL_PREFIX     = "[[ALC_TS_v1_"
+C.TELEMETRY_SCHEMA_VERSION = 1
 
 -- Inspect timings
 C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebeard via /alcprobe throttle-blast 1.0: 24/24 fires got replies, 0% server-throttled. 25-man cold cycle: 48s → 24s. Legacy fallback when ALC.Profile is unset.
@@ -220,6 +231,16 @@ C.INSPECT_FLIP_DELAY_S = 0.4
 C.VANITY_POLL_MAX_ATTEMPTS = 8
 C.VANITY_POLL_INTERVAL_S = 1.0
 
+-- Encounter telemetry cadence. Snapshots compress + chunk through the same
+-- relay as CI and PP, so we throttle on three axes: interval (how often to
+-- emit), monster active/prune windows (which mobs are in-band for the
+-- snapshot), and a queue-pressure backoff (skip snapshots when the relay
+-- is already saturated, since adding more would just deepen the backlog).
+C.TELEMETRY_INTERVAL_S              = 2.0
+C.TELEMETRY_MONSTER_ACTIVE_WINDOW_S = 12.0
+C.TELEMETRY_MONSTER_PRUNE_AFTER_S   = 60.0
+C.TELEMETRY_QUEUE_SKIP_AT_CHUNKS    = 300
+
 -- Peers per OnUpdate frame when draining the deferred publish queue.
 -- 0.41.0: dropped from 2 to 1. At 2 peers/frame the per-frame compression
 -- cost was ~100ms (2 x ~50ms LibDeflate), which is ~6 dropped frames at
@@ -241,4 +262,5 @@ C.DEFAULT_CONFIG = {
     silent_auto_logging = false,  -- skip both start + stop popups; logging stays on across zone changes until user manually toggles
     log_dungeons = true,          -- when off, auto-/combatlog only fires for raids (instanceType=="raid"), skipping 5-man dungeons
     pet_tracking_enabled = true,  -- 0.42.0: PP chunk emission for {owner, pet} GUID pairs from controlled-pet unit slots
+    telemetry_enabled    = true,  -- 0.42.1 local experiment: TS chunk emission for periodic encounter telemetry (positions, vitals, hostile NPC ledger). Not yet consumed server-side.
 }

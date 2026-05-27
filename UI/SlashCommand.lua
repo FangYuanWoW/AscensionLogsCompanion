@@ -78,6 +78,45 @@ SlashCmdList["ALC"] = function(msg)
         if (c.boss_transitions or 0) > 0 then
             L.info("  Boss transitions: |cffe8e8e8" .. c.boss_transitions .. "|r")
         end
+        if (c.telemetry_snapshots_queued or 0) > 0 or (c.telemetry_snapshots_skipped or 0) > 0 then
+            L.info(" ")
+            L.info("|cffffd200Encounter telemetry|r")
+            L.info("  Snapshots queued: |cffe8e8e8" .. (c.telemetry_snapshots_queued or 0) .. "|r"
+                .. "    Skipped: |cffe8e8e8" .. (c.telemetry_snapshots_skipped or 0) .. "|r")
+            L.info("  Hostile NPCs seen: |cffe8e8e8" .. (c.telemetry_monsters_seen or 0) .. "|r"
+                .. "    Positioned units: |cffe8e8e8" .. (c.telemetry_units_positioned or 0) .. "|r")
+            if ALC.Capture.Telemetry then
+                L.info("  Last snapshot: |cffe8e8e8" .. tostring(ALC.Capture.Telemetry.lastSnapshotId or "(none)") .. "|r"
+                    .. "    Last skip: |cffe8e8e8" .. tostring(ALC.Capture.Telemetry.lastSkipReason or "(none)") .. "|r")
+            end
+        end
+
+    elseif cmd == "telemetry" then
+        _G.ALC_Config = _G.ALC_Config or {}
+        local sub = parts[2]
+        if sub == "on" then
+            ALC_Config.telemetry_enabled = true
+            L.info("Telemetry snapshots: on")
+        elseif sub == "off" then
+            ALC_Config.telemetry_enabled = false
+            L.info("Telemetry snapshots: off")
+        elseif sub == "now" then
+            if ALC.Capture.Telemetry and ALC.Capture.Telemetry.forceSnapshot then
+                local ok = ALC.Capture.Telemetry.forceSnapshot()
+                L.info("Telemetry snapshot: " .. (ok and "queued" or "not queued"))
+            else
+                L.warn("Telemetry module not loaded.")
+            end
+        elseif sub == "probe" or sub == "status" then
+            if ALC.Capture.Telemetry and ALC.Capture.Telemetry.probe then
+                ALC.Capture.Telemetry.probe(L.info)
+            else
+                L.warn("Telemetry module not loaded.")
+            end
+        else
+            L.info("Telemetry snapshots: " .. ((ALC_Config.telemetry_enabled and "on") or "off"))
+            L.info("Usage: /alc telemetry on | off | now | probe")
+        end
 
     elseif cmd == "debug" then
         _G.ALC_Config = _G.ALC_Config or {}
