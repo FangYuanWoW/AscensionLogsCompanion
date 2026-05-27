@@ -12,9 +12,50 @@ local C = ALC.Core.Constants
 I.inFlight = nil       -- { guid = ..., started_at = ... }
 I.lastTickAt = 0
 I.ticker = nil         -- OnUpdate handler
+I.unitByGuid = {}      -- GUID -> unit token ("raidN"/"partyN"/"player")
+I.rosterGuids = {}     -- stable roster GUID list used by pickNext rule 1
 
 local function now()
     return GetTime()
+end
+
+-- Rebuild GUID->unit and roster-guid indices from current roster state.
+-- This avoids repeated UnitGUID("raidN"/"partyN") scans on every inspect tick.
+local function rebuildUnitIndex()
+    local byGuid = {}
+    local roster = {}
+    local seenRoster = {}
+    local selfGuid = UnitGUID("player")
+    if selfGuid then
+        byGuid[selfGuid] = "player"
+    end
+
+    for i = 1, (GetNumRaidMembers() or 0) do
+        local u = "raid" .. i
+        local guid = UnitGUID(u)
+        if guid then
+            byGuid[guid] = u
+            if guid ~= selfGuid and not seenRoster[guid] then
+                roster[#roster + 1] = guid
+                seenRoster[guid] = true
+            end
+        end
+    end
+
+    for i = 1, (GetNumPartyMembers() or 0) do
+        local u = "party" .. i
+        local guid = UnitGUID(u)
+        if guid then
+            byGuid[guid] = u
+            if guid ~= selfGuid and not seenRoster[guid] then
+                roster[#roster + 1] = guid
+                seenRoster[guid] = true
+            end
+        end
+    end
+
+    I.unitByGuid = byGuid
+    I.rosterGuids = roster
 end
 
 -- Transmog-visibility gate. When the user has C_Appearance.SetCanSeeAppearances
@@ -132,16 +173,18 @@ end
 -- vanityPoll's reference still pointing at global nil.
 resolveUnit = function(guid)
     if not guid then return nil end
-    -- Raid roster (priority for in-raid inspects)
-    for i = 1, (GetNumRaidMembers() or 0) do
-        local u = "raid" .. i
-        if UnitGUID(u) == guid then return u end
+    local cached = I.unitByGuid and I.unitByGuid[guid]
+    if cached and UnitExists(cached) and UnitGUID(cached) == guid then
+        return cached
     end
-    -- Party
-    for i = 1, (GetNumPartyMembers() or 0) do
-        local u = "party" .. i
-        if UnitGUID(u) == guid then return u end
+
+    -- Cache might be stale if roster changed without a roster event; refresh once.
+    rebuildUnitIndex()
+    cached = I.unitByGuid and I.unitByGuid[guid]
+    if cached and UnitExists(cached) and UnitGUID(cached) == guid then
+        return cached
     end
+
     -- Solo / out-of-group fallback: target / mouseover / focus
     -- Important for /alc inspect-now to work outside a party.
     for _, u in ipairs({ "target", "mouseover", "focus" }) do
@@ -163,18 +206,8 @@ local function pickNext()
     -- Rule 1: missing roster entries (raid + party). Skip self - in raids,
     -- raid1..raidN includes the player; CanInspect(self) returns false so
     -- attempting to inspect self burns a tick and dirties inspect_gate_fail.
-    local selfGuid = UnitGUID("player")
-    for i = 1, (GetNumRaidMembers() or 0) do
-        local u = "raid" .. i
-        local guid = UnitGUID(u)
-        if guid and guid ~= selfGuid and not cache[guid] then
-            return guid
-        end
-    end
-    for i = 1, (GetNumPartyMembers() or 0) do
-        local u = "party" .. i
-        local guid = UnitGUID(u)
-        if guid and guid ~= selfGuid and not cache[guid] then
+    for _, guid in ipairs(I.rosterGuids or {}) do
+        if guid and not cache[guid] then
             return guid
         end
     end
@@ -715,6 +748,8 @@ local function tick()
 end
 
 function I.onRosterChange()
+    rebuildUnitIndex()
+
     -- Purge entries for players no longer in group (raid + party).
     -- UnitGUID("player") can transiently return nil during a raid disband
     -- (PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE fire mid-transition).
@@ -725,13 +760,8 @@ function I.onRosterChange()
     if not pg then return end
 
     local inRoster = { [pg] = true }
-    for i = 1, (GetNumRaidMembers() or 0) do
-        local g = UnitGUID("raid" .. i)
-        if g then inRoster[g] = true end
-    end
-    for i = 1, (GetNumPartyMembers() or 0) do
-        local g = UnitGUID("party" .. i)
-        if g then inRoster[g] = true end
+    for guid in pairs(I.unitByGuid or {}) do
+        inRoster[guid] = true
     end
     for guid in pairs(ALC.Capture.InspectCache.snapshot()) do
         if not inRoster[guid] then
@@ -742,6 +772,8 @@ end
 
 -- Event wiring
 function I.start()
+    rebuildUnitIndex()
+
     ALC.RegisterEvent("INSPECT_TALENT_READY", onInspectReady)
     if ALC.Profile ~= "epoch" then
         -- Ascension-specific inspect-result events. We treat any payload as
