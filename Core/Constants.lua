@@ -7,6 +7,11 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.42.1: roster-cache perf pass. InspectLoop now keeps a GUID->unit hash
+-- (rebuilt on roster events, lazy-revalidated on miss) instead of rescanning
+-- raid1..raidN per resolveUnit/pickNext call. SnapshotPipeline.deferQueue
+-- switched from table.remove(queue,1) to a head/tail FIFO, eliminating the
+-- O(n) shift per drained peer in large-group inspect bursts.
 -- 0.42.0: new PP chunk family for ground-truth {owner, pet} GUID pairs
 -- captured from the controlled-pet unit slots (raidNpet / partyNpet / pet).
 -- Rides the existing SpellFailedRelay transport with a distinct envelope
@@ -14,7 +19,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.42.0"
+C.VERSION = "0.42.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
