@@ -7,6 +7,12 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.50.0: TS (telemetry) chunk family ships. Third ALC chunk family,
+-- parallel to CI (combatant info) and PP (pet pairs): periodic encounter
+-- snapshots of player positions/vitals + a CLEU-built hostile NPC ledger,
+-- transiting the existing SpellFailedRelay under the [[ALC_TS_v1_...]]
+-- envelope. Self-throttles against relay backlog; schema not yet consumed
+-- server-side, so a dropped snapshot is cosmetic.
 -- 0.42.1: roster-cache perf pass. InspectLoop now keeps a GUID->unit hash
 -- (rebuilt on roster events, lazy-revalidated on miss) instead of rescanning
 -- raid1..raidN per resolveUnit/pickNext call. SnapshotPipeline.deferQueue
@@ -19,7 +25,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.42.1"
+C.VERSION = "0.50.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
