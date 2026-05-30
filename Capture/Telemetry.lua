@@ -10,9 +10,10 @@
 --
 -- Cost model: TELEMETRY_INTERVAL_S = 2.0 means roughly one snapshot every
 -- ~120 frames at 60fps. Each snapshot is compressed + chunked through the
--- same relay queue as CI, so a 25-man with ~20-30 active mobs typically
--- produces 4-6 chunks per snapshot. Throttled by TELEMETRY_QUEUE_SKIP_AT_CHUNKS
--- so a backlogged relay can't snowball into more chunks.
+-- same relay queue as CI. A backlogged relay can't snowball into more chunks
+-- because the cadence self-throttles (effectiveInterval stretches the
+-- interval as the queue fills) rather than emitting faster than it drains;
+-- it never stops, just slows under pressure and recovers as the queue drains.
 --
 -- Efficiency notes:
 --   * npc_id parsed once per GUID, memoized on the monster entry itself
@@ -269,14 +270,17 @@ local function buildUnitEntry(unit, rosterRaidInfo)
     local hasTarget  = UnitExists(targetUnit)
     local pos        = readPosition(unit)
 
+    -- Payload trimmed in 0.51.0: name / level / zone / target_name and the
+    -- world_x/y/z coordinate triplet (+ position-source strings) are dropped.
+    -- The server resolves identity by guid (the characters table already
+    -- carries name/level from the CI/inspect path), and the replay viewer is
+    -- 2D so only the map_x/map_y pair is consumed. `class` stays: the
+    -- demuxer's targeter-anchor monster positioning keys on it (isMeleeUnit).
     local out = {
         unit       = unit,
         guid       = static.guid,
-        name       = static.name,
         class      = static.class,
-        level      = static.level,
         subgroup   = rosterRaidInfo and rosterRaidInfo.subgroup or nil,
-        zone       = rosterRaidInfo and rosterRaidInfo.zone or nil,
         online     = rosterRaidInfo and rosterRaidInfo.online,
         dead       = UnitIsDeadOrGhost(unit) and true or false,
         connected  = UnitIsConnected(unit) and true or false,
@@ -284,18 +288,11 @@ local function buildUnitEntry(unit, rosterRaidInfo)
         max_health = UnitHealthMax(unit),
         power      = unitPower(unit),
         target_guid = hasTarget and UnitGUID(targetUnit) or nil,
-        target_name = hasTarget and UnitName(targetUnit) or nil,
     }
 
     if pos then
         out.map_x = pos.map_x
         out.map_y = pos.map_y
-        out.world_x = pos.world_x
-        out.world_y = pos.world_y
-        out.world_z = pos.world_z
-        out.world_instance_id = pos.world_instance_id
-        out.map_position_source = pos.map_position_source
-        out.world_position_source = pos.world_position_source
     end
     return out
 end
@@ -505,13 +502,9 @@ local function buildVisibleMonsterIndex()
         }
         local pos = readPosition(unit)
         if pos then
+            -- 2D replay only; world_x/y/z + position-source strings trimmed in 0.51.0.
             entry.map_x = pos.map_x
             entry.map_y = pos.map_y
-            entry.world_x = pos.world_x
-            entry.world_y = pos.world_y
-            entry.world_z = pos.world_z
-            entry.map_position_source   = pos.map_position_source
-            entry.world_position_source = pos.world_position_source
         end
         out[g] = entry
     end
@@ -538,24 +531,18 @@ local function collectMonsters(targetCounts)
         if age > pruneAfter then
             T.monsters[guid] = nil
         elseif age <= activeWindow or (m.death_at and now - m.death_at <= activeWindow) then
+            -- Payload trimmed in 0.51.0: the combat ledger (name, flags,
+            -- *_seen_at, source/dest_events, casts, damage_*, healing_done,
+            -- last_event, last_spell_*, targeted_by_count) is dropped - none
+            -- of it survives to encounter_actor_samples server-side. Only
+            -- guid, npc_id, death_at and the visible{} block are kept. The
+            -- ledger is still accumulated in T.monsters because last_seen_at
+            -- / death_at drive the active-window filter above; it just isn't
+            -- serialized into the snapshot anymore.
             local entry = {
-                guid             = guid,
-                npc_id           = m.npc_id,
-                name             = m.name,
-                flags            = m.flags,
-                first_seen_at    = m.first_seen_at,
-                last_seen_at     = m.last_seen_at,
-                death_at         = m.death_at,
-                source_events    = m.source_events,
-                dest_events      = m.dest_events,
-                casts            = m.casts,
-                damage_done      = m.damage_done,
-                damage_taken     = m.damage_taken,
-                healing_done     = m.healing_done,
-                last_event       = m.last_event,
-                last_spell_id    = m.last_spell_id,
-                last_spell_name  = m.last_spell_name,
-                targeted_by_count = targetCounts and targetCounts[guid] or 0,
+                guid     = guid,
+                npc_id   = m.npc_id,
+                death_at = m.death_at,
             }
             local visible = visibleByGuid[guid]
             if visible then entry.visible = visible end
@@ -574,6 +561,31 @@ local function relayQueueSize()
     return relay.queue.size or 0
 end
 
+-- Adaptive cadence (0.51.0). The relay only drains when the logging player
+-- organically fails a cast (a few chunks/min), far slower than a fixed 2s
+-- feed. A fixed interval just front-loads the shared queue - the 6-10%
+-- front-loaded coverage seen on reports 9785/9794. Instead, stretch the
+-- interval as the queue fills: base cadence while shallow, ramping linearly
+-- toward TELEMETRY_MAX_INTERVAL_S as the queue approaches the ring cap.
+--
+-- This is a self-throttle, NOT a stop: it always returns a finite interval,
+-- so generation stays continuous for the whole encounter. There is no
+-- queue-depth skip anymore (see shouldSnapshot); the cadence simply goes
+-- coarser under pressure and back to 2s as the queue drains.
+local function effectiveInterval()
+    local base = C.TELEMETRY_INTERVAL_S or 2.0
+    local soft = C.TELEMETRY_BACKOFF_START_CHUNKS or 80
+    local q = relayQueueSize()
+    if q <= soft then return base end
+    local maxInterval = C.TELEMETRY_MAX_INTERVAL_S or 20.0
+    local hard = C.RELAY_QUEUE_MAX_CHUNKS or 400
+    local span = hard - soft
+    if span < 1 then span = 1 end
+    local frac = (q - soft) / span
+    if frac > 1 then frac = 1 end
+    return base + (maxInterval - base) * frac
+end
+
 local function shouldSnapshot()
     if not _G.ALC_Config then T.lastSkipReason = "no_config"; return false end
     if not ALC_Config.telemetry_enabled then T.lastSkipReason = "disabled"; return false end
@@ -585,11 +597,13 @@ local function shouldSnapshot()
     if instType ~= "raid" and instType ~= "party" then
         T.lastSkipReason = "not_instance"; return false
     end
-    if relayQueueSize() >= (C.TELEMETRY_QUEUE_SKIP_AT_CHUNKS or 300) then
-        T.lastSkipReason = "relay_queue_full"
-        if ALC.Core.Metrics then ALC.Core.Metrics.inc("telemetry_snapshots_skipped") end
-        return false
-    end
+    -- No queue-pressure stop (0.51.0): telemetry NEVER gates itself off on
+    -- queue depth. A logger that is actively capturing should stay continuous
+    -- for the whole encounter; effectiveInterval() handles relay backpressure
+    -- by stretching the cadence (self-throttle), never by going silent. The
+    -- only stops are the intentional scope gates checked above (logger /
+    -- combatlog / combat / instance). The ring's own overflow eviction bounds
+    -- memory; coarser cadence under load keeps that churn low.
     T.lastSkipReason = nil
     return true
 end
@@ -701,7 +715,7 @@ function T.start()
             return
         end
         T.accum = T.accum + elapsed
-        if T.accum >= (C.TELEMETRY_INTERVAL_S or 2.0) then
+        if T.accum >= effectiveInterval() then
             T.accum = 0
             T.snapshot("interval")
         end

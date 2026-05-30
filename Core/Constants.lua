@@ -25,7 +25,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.50.0"
+C.VERSION = "0.51.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -238,14 +238,33 @@ C.VANITY_POLL_MAX_ATTEMPTS = 8
 C.VANITY_POLL_INTERVAL_S = 1.0
 
 -- Encounter telemetry cadence. Snapshots compress + chunk through the same
--- relay as CI and PP, so we throttle on three axes: interval (how often to
--- emit), monster active/prune windows (which mobs are in-band for the
--- snapshot), and a queue-pressure backoff (skip snapshots when the relay
--- is already saturated, since adding more would just deepen the backlog).
-C.TELEMETRY_INTERVAL_S              = 2.0
+-- relay as CI and PP, and the relay only drains when the logging player
+-- organically fails a cast (a few chunks/min). So the transport, not the
+-- 2s timer, sets the real emission rate.
+--
+-- The 0.50.x hard "skip at 300 chunks" gate turned that shortfall into a
+-- dense front-loaded burst followed by dead air: at pull start the ring is
+-- near-empty so telemetry fires at 2s, but within ~15-35s the shared queue
+-- (TS + the whole-raid CI broadcast) crosses 300 and EVERY later snapshot
+-- is skipped, because organic fails can't drain it back under 300. Field
+-- reports 9785/9794 showed 6-10% of a fight covered, all at the start.
+--
+-- 0.51.0 replaces the binary gate with an adaptive cadence: emit at the
+-- base interval while the queue is shallow, then stretch the interval
+-- toward TELEMETRY_MAX_INTERVAL_S as the queue fills, so generation tracks
+-- the channel's real drain rate and the snapshots that DO land spread
+-- evenly across the whole fight instead of front-loading. Crucially the
+-- cadence NEVER stops on queue depth: it self-throttles by stretching the
+-- interval (ramping from TELEMETRY_BACKOFF_START_CHUNKS up to the
+-- RELAY_QUEUE_MAX_CHUNKS ring cap) rather than ever gating off, so telemetry
+-- stays continuous for the whole encounter. There is no queue-pressure skip;
+-- the only stops are the intentional scope gates (logger / combatlog /
+-- combat / instance).
+C.TELEMETRY_INTERVAL_S              = 2.0   -- base cadence (shallow queue)
+C.TELEMETRY_MAX_INTERVAL_S          = 20.0  -- most-stretched cadence (queue near ring cap)
+C.TELEMETRY_BACKOFF_START_CHUNKS    = 80    -- begin stretching the interval past this depth
 C.TELEMETRY_MONSTER_ACTIVE_WINDOW_S = 12.0
 C.TELEMETRY_MONSTER_PRUNE_AFTER_S   = 60.0
-C.TELEMETRY_QUEUE_SKIP_AT_CHUNKS    = 300
 
 -- Peers per OnUpdate frame when draining the deferred publish queue.
 -- 0.41.0: dropped from 2 to 1. At 2 peers/frame the per-frame compression
