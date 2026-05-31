@@ -106,7 +106,7 @@ local function instanceInfo()
     if type(_G.GetInstanceInfo) ~= "function" then return nil end
     local name, instType, diffIdx, diffName, maxPlayers,
           playerDiff, isDynamic, mapId = GetInstanceInfo()
-    return {
+    local out = {
         name              = name,
         instance_type     = instType,
         difficulty_index  = diffIdx,
@@ -116,6 +116,25 @@ local function instanceInfo()
         is_dynamic        = isDynamic and true or false,
         map_id            = mapId,
     }
+    -- Thin Mythic+ keystone marker so any CI snapshot taken mid-run is
+    -- self-describing (a +N key is otherwise indistinguishable from a plain
+    -- Mythic 5-man: both report difficulty_index=3, difficulty_name=""). The
+    -- authoritative lifecycle + timed/depleted signal rides the separate KS
+    -- chunk family (Capture/KeystoneScan.lua); this is just current state.
+    -- Ascension-only: KeystoneScan.readActiveKeystone() returns nil when
+    -- C_MythicPlus is absent (Epoch) or no key is active.
+    local KS = ALC.Capture.KeystoneScan
+    if KS and KS.readActiveKeystone then
+        local ks = KS.readActiveKeystone()
+        if ks then
+            out.keystone = {
+                is_active  = true,
+                level      = ks.level,
+                dungeon_id = ks.dungeon_id,
+            }
+        end
+    end
+    return out
 end
 
 function L.buildLocalCI(sessionId)

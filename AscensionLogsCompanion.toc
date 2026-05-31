@@ -15,6 +15,9 @@ Core\Logger.lua
 Core\Queue.lua
 Core\Serialize.lua
 Core\Base64.lua
+Core\Transport8.lua
+Core\DictD1.lua
+Core\Frame.lua
 Core\Hash.lua
 Core\Metrics.lua
 Core\Profile.lua
@@ -27,10 +30,12 @@ Capture\GearScan.lua
 Capture\InspectCache.lua
 Capture\EncounterTracker.lua
 Capture\InspectLoop.lua
+Capture\FrameBuilder.lua
 Capture\SnapshotPipeline.lua
 Capture\PetPipeline.lua
 Capture\PetTracker.lua
 Capture\Telemetry.lua
+Capture\KeystoneScan.lua
 
 Transport\AddonChannel.lua
 Transport\SpellFailedRelay.lua

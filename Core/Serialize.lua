@@ -83,6 +83,65 @@ function S.serializeCI(ci)
     return serialize(ci)
 end
 
+-- Codec c2: AceSerializer + deflate WITH the D1 preset dictionary (Core/DictD1.lua).
+-- The dictionary is created once via LibDeflate:CreateDictionary and cached.
+-- Returns nil if libs/dict/CompressDeflateWithDict are unavailable, so callers
+-- degrade to plain c1 deflate. Server decodes with zlib {dictionary} (same bytes).
+local cachedDict  -- nil = not tried, false = unavailable, table = ready
+local function getD1Dict()
+    if cachedDict ~= nil then return cachedDict or nil end
+    local l = libs()
+    local D = ALC.Core.Dictionaries and ALC.Core.Dictionaries.D1
+    if not (l.deflate and D and l.deflate.CompressDeflateWithDict and l.deflate.CreateDictionary) then
+        cachedDict = false
+        return nil
+    end
+    -- Prefer LibDeflate's own Adler32 so CreateDictionary's integrity check
+    -- always matches the embedded bytes; fall back to the precomputed value.
+    local adler = (l.deflate.Adler32 and l.deflate:Adler32(D.bytes)) or D.adler32
+    local ok, dict = pcall(function()
+        return l.deflate:CreateDictionary(D.bytes, D.size or #D.bytes, adler)
+    end)
+    cachedDict = (ok and dict) or false
+    return cachedDict or nil
+end
+
+function S.serializeCIWithDict(ci)
+    if not ci then return nil end
+    local l = libs()
+    local dict = getD1Dict()
+    if not (l.ser and l.deflate and dict) then return nil end
+    local s = l.ser:Serialize(ci)
+    local ok, out = pcall(function()
+        return l.deflate:CompressDeflateWithDict(s, dict, { level = 5 })
+    end)
+    if not ok then return nil end
+    return out
+end
+
+-- F-frame helpers (codec overhaul Phase 4). A frame bundles several record
+-- bodies (each a raw AceSerialized struct) and is deflated ONCE with the dict.
+-- aceEncode produces the per-record body (no compression); deflateWithDict
+-- compresses the assembled frame. Both return nil if libs/dict are unavailable
+-- so callers degrade gracefully.
+function S.aceEncode(struct)
+    local l = libs()
+    if not l.ser then return nil end
+    return l.ser:Serialize(struct)
+end
+
+function S.deflateWithDict(text)
+    if type(text) ~= "string" then return nil end
+    local l = libs()
+    local dict = getD1Dict()
+    if not (l.deflate and dict) then return nil end
+    local ok, out = pcall(function()
+        return l.deflate:CompressDeflateWithDict(text, dict, { level = 5 })
+    end)
+    if not ok then return nil end
+    return out
+end
+
 -- Inverse of serializeCI. Used by server-side parser; addon side rarely
 -- deserializes its own output.
 function S.deserializeCI(blob)

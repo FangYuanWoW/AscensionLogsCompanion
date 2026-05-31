@@ -614,6 +614,10 @@ local function buildChunkEnvelope(sessionId, snapshotId, seq, total, b64)
 end
 
 local function enqueuePayload(payload, sessionId, snapshotId)
+    -- Phase 4 frame gate: bundle this telemetry snapshot into an [[ALC_F_...]] frame.
+    if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.enabled() then
+        return ALC.Capture.FrameBuilder.add(ALC.Capture.FrameBuilder.TYPE.TS, payload)
+    end
     -- serializeCI is the generic Ace+Deflate serializer (same path PetPipeline
     -- reuses). Despite the name, it takes any table.
     local compressed = ALC.Core.Serialize.serializeCI(payload)

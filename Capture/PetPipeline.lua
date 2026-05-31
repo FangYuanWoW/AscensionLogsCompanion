@@ -102,6 +102,12 @@ function P.publishPairs(pairs)
         body.pairs[i] = { o = pairs[i].owner, p = pairs[i].pet }
     end
 
+    -- Phase 4 frame gate: bundle this pet-pair record into an [[ALC_F_...]] frame.
+    if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.enabled() then
+        ALC.Capture.FrameBuilder.add(ALC.Capture.FrameBuilder.TYPE.PP, body)
+        return
+    end
+
     -- Reuse the generic Ace+Deflate serializer. Despite the "CI" naming,
     -- the function is body-agnostic (Lua table -> deflated binary string).
     local compressed = ALC.Core.Serialize.serializeCI(body)

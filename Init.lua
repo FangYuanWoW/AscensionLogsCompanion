@@ -73,6 +73,10 @@ local function boot()
     -- depth, so it's safe to run alongside CI + PP transit on the same
     -- SpellFailedRelay.
     safeStart("Telemetry", ALC.Capture.Telemetry)
+    -- KeystoneScan arms the Mythic+ lifecycle events (start/complete). It is
+    -- event-driven and Ascension-only (no-ops on Epoch where C_MythicPlus is
+    -- absent), so it's cheap to boot alongside the other capture modules.
+    safeStart("KeystoneScan", ALC.Capture.KeystoneScan)
     safeStart("MinimapButton", ALC.UI.MinimapButton)
 
     ALC.Core.Logger.info("|cff00ff00Ascension Logs Companion|r v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/alc|r for settings.")

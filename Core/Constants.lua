@@ -7,6 +7,15 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.52.0 (pending, dev on feat/keystone-capture; VERSION stays 0.51.0 until
+-- release): KS (keystone) chunk family - fourth ALC family, parallel to CI/PP/
+-- TS. Event-driven (not periodic): one "start" record on MYTHIC_PLUS_STARTED
+-- and one "complete" record on MYTHIC_PLUS_COMPLETE, the latter carrying the
+-- authoritative timed-vs-depleted boolean (arg1). Rides the same
+-- SpellFailedRelay transport under [[ALC_KS_v1_...]]. Ascension-only
+-- (C_MythicPlus absent on Epoch -> module inert). A thin {is_active, level,
+-- dungeon_id} marker also rides ci.instance.keystone so mid-run CI snapshots
+-- are self-describing. Schema not yet consumed server-side.
 -- 0.50.0: TS (telemetry) chunk family ships. Third ALC chunk family,
 -- parallel to CI (combatant info) and PP (pet pairs): periodic encounter
 -- snapshots of player positions/vitals + a CLEU-built hostile NPC ledger,
@@ -90,6 +99,33 @@ C.RELAY_FAMILY_PREFIX = "[[ALC_"
 -- Local experiment as of 0.42.1: schema not yet consumed server-side.
 C.TS_SENTINEL_PREFIX     = "[[ALC_TS_v1_"
 C.TELEMETRY_SCHEMA_VERSION = 1
+
+-- Keystone (KS) chunk envelope. Fourth family, parallel to CI / PP / TS.
+-- Carries Mythic+ keystone lifecycle EVENTS (not periodic snapshots): one
+-- "start" record when MYTHIC_PLUS_STARTED fires and one "complete" record
+-- when MYTHIC_PLUS_COMPLETE fires. The complete record's `completed_timed`
+-- is the authoritative timed-vs-depleted signal (MYTHIC_PLUS_COMPLETE arg1),
+-- confirmed both ways by the 2026-05-27 (depleted, a1=false) and 2026-05-30
+-- (timed, a1=true) probe runs. Affixes/level/dungeon are Ascension internal
+-- IDs (huge numbers) captured raw; the backend resolves names.
+-- Body shape: { schema_version=1, addon_version, stream="keystone",
+--   event_type="start"|"complete", session_id, event_id, captured_at,
+--   captured_by_guid, server, completed_timed (complete only), keystone={...} }
+-- Format: [[ALC_KS_v1_<sessionId>_<eventId>_<seq>/<total>]]<b64>
+-- Ascension-only: C_MythicPlus is absent on Epoch, so the module no-ops there.
+-- Local experiment as of 0.51.x: schema not yet consumed server-side.
+C.KS_SENTINEL_PREFIX  = "[[ALC_KS_v1_"
+C.KS_SCHEMA_VERSION   = 1
+
+-- Keystone-outcome drain tuning. The MYTHIC_PLUS_COMPLETE record is enqueued
+-- into the relay's PRIORITY lane (drains ahead of the normal CI/PP/TS ring)
+-- and the relay is kept active for KS_KEEPALIVE_S after the key ends - even
+-- out of combat, where the relay normally sleeps - so the next ORGANIC failed
+-- cast (mount, cooldown, "can't do that while moving") carries it into
+-- WoWCombatLog.txt. A toast fires only on confirmed landing. (A forced
+-- fail-cast was prototyped to guarantee a landing but removed: it requires
+-- protected-function calls that taint from insecure code.)
+C.KS_KEEPALIVE_S = 45    -- relay stays active this long after MYTHIC_PLUS_COMPLETE
 
 -- Inspect timings
 C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebeard via /alcprobe throttle-blast 1.0: 24/24 fires got replies, 0% server-throttled. 25-man cold cycle: 48s → 24s. Legacy fallback when ALC.Profile is unset.
@@ -203,6 +239,7 @@ C.RELAY_FAIL_GLOBALS = {
     "SPELL_FAILED_NOT_HERE",                 -- "You can't use that here."
     "SPELL_FAILED_MOVING",                   -- "Can't do that while moving"
     "SPELL_FAILED_CUSTOM_ERROR_32",          -- "Must be in Cat Form" (Ascension-specific slot)
+
 }
 
 -- Chunking
@@ -288,4 +325,10 @@ C.DEFAULT_CONFIG = {
     log_dungeons = true,          -- when off, auto-/combatlog only fires for raids (instanceType=="raid"), skipping 5-man dungeons
     pet_tracking_enabled = true,  -- 0.42.0: PP chunk emission for {owner, pet} GUID pairs from controlled-pet unit slots
     telemetry_enabled    = true,  -- 0.42.1 local experiment: TS chunk emission for periodic encounter telemetry (positions, vitals, hostile NPC ledger). Not yet consumed server-side.
+    keystone_enabled     = true,  -- 0.51.x local experiment: KS chunk emission for Mythic+ keystone start/complete lifecycle events (Ascension only; no-op on Epoch). Not yet consumed server-side.
+    keystone_keepalive   = true,  -- 0.51.x: on key complete, keep the relay active for KS_KEEPALIVE_S out of combat so an organic failed cast flushes the priority outcome chunk. Set false to drain only while in combat.
+    keystone_toast       = true,  -- 0.51.x: show an on-screen toast when the key-outcome chunk is confirmed landed in the combat log.
+    ci_transport_c1      = false, -- DEPRECATED test gate (raw 8-bit transport - abandoned; the server reads logs via readline/UTF-8 which mangles non-ASCII). Superseded by ci_codec/frame_codec.
+    ci_codec             = nil,   -- TEST GATE: "c2" => CI chunks use dict-deflate + base64 ([[ALC_CI_v2_c2_...]]). nil/"legacy" => plain base64. /alc c2 on.
+    frame_codec          = nil,   -- TEST GATE (Phase 4): "c2" => CI/TS/PP records bundle into [[ALC_F_v1_c2_...]] frames (one dict-deflate + base64 per frame). KS stays on its own priority path. nil/"legacy" => each family uses its legacy per-family chunk. /alc frame on.
 }

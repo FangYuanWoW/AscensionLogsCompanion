@@ -35,7 +35,40 @@ H.active = false
 H.queue = nil       -- ring buffer of chunks
 H.queueIdx = 1
 H.pendingChunk = nil  -- chunk currently sitting in the rewritten globals; cleared on landed evidence
+H.pendingSource = nil -- "priority" | "ring": which lane the pendingChunk came from, so landed-evidence advances the right structure
 H.globalsDirty = false  -- true when applyChunk has overwritten globals; cleared by restoreAll
+
+-- Priority lane (0.51.x). A short FIFO that drains AHEAD of the normal ring.
+-- Used for time-critical chunks that must not wait behind a backlog - the
+-- Mythic+ keystone outcome record being the motivating case. Entries are
+-- { chunk=<str>, pushed_at=<sec> }, same shape as ring entries.
+H.priorityQueue = {}
+
+-- Keepalive (0.51.x). A timestamp; while time() < keepaliveUntil the relay
+-- stays active even out of combat (see shouldBeActive), so a chunk enqueued at
+-- combat-end - e.g. the keystone outcome, which fires as the key completes and
+-- the player leaves combat - still gets a drain window. Driven by an OnUpdate
+-- pump frame that deactivates the relay when the window lapses (out of combat
+-- there may be no CLEU events to trigger reevaluate otherwise).
+H.keepaliveUntil = nil
+H._kaFrame = nil
+
+-- Landed hooks (0.51.x). fn(chunk) is invoked for every chunk that lands in
+-- the combat log (confirmed via landed-evidence). KeystoneScan registers one
+-- to fire its "exported" toast only on real landing.
+H.landedHooks = {}
+
+function H.addLandedHook(fn)
+    if type(fn) == "function" then
+        H.landedHooks[#H.landedHooks + 1] = fn
+    end
+end
+
+local function fireLandedHooks(chunk)
+    for i = 1, #H.landedHooks do
+        pcall(H.landedHooks[i], chunk)
+    end
+end
 
 local function ensureOriginalsCaptured()
     if H.originals then return end
@@ -102,66 +135,125 @@ end
 
 function H.clearQueue()
     if H.queue then ALC.Core.Queue.ringClear(H.queue) end
+    H.priorityQueue = {}
     H.pendingChunk = nil
+    H.pendingSource = nil
+end
+
+-- Priority enqueue (0.51.x): chunk jumps ahead of the normal ring. Used for
+-- the keystone outcome so it isn't stuck behind a full encounter's CI/TS
+-- backlog when the player is about to leave the instance.
+function H.enqueueFront(chunk)
+    H.priorityQueue[#H.priorityQueue + 1] = { chunk = chunk, pushed_at = time() }
+    ALC.Core.Metrics.inc("chunks_queued_priority")
+    ALC.Core.Metrics.observe_payload_len(#chunk)
+end
+
+-- Request the relay stay active (and keep draining) for `seconds` even out of
+-- combat. Activates immediately and arms the expiry pump.
+function H.requestKeepalive(seconds)
+    local until_ = time() + (seconds or 0)
+    if not H.keepaliveUntil or until_ > H.keepaliveUntil then
+        H.keepaliveUntil = until_
+    end
+    H.reevaluate()
+    H.startKeepalivePump()
 end
 
 -- Scope check: should the relay be active right now?
 local function shouldBeActive()
     if not _G.ALC_Config or not ALC_Config.hijack_enabled then return false end
     if not LoggingCombat or not LoggingCombat() then return false end
-    if not UnitAffectingCombat("player") then return false end
     local _, instType = IsInInstance()
     -- raid = 25-raid, party = 5-man dungeons. Allow both so dungeon
     -- testing produces CI lines too.
     if instType ~= "raid" and instType ~= "party" then return false end
-    return true
+    if UnitAffectingCombat("player") then return true end
+    -- Out of combat the relay normally sleeps. The one exception is a live
+    -- keepalive window (keystone-outcome flush): stay active so a post-combat
+    -- failed cast can still carry the priority chunk into the log.
+    if H.keepaliveUntil and time() < H.keepaliveUntil then return true end
+    return false
+end
+
+-- Two-lane head: the priority lane (keystone outcome etc.) drains entirely
+-- before the normal CI/PP/TS ring. Returns the current head entry and which
+-- lane it belongs to so landed-evidence advances the correct structure.
+local function headEntry()
+    if #H.priorityQueue > 0 then return H.priorityQueue[1], "priority" end
+    if H.queue and H.queue.size > 0 then return ALC.Core.Queue.ringPeek(H.queue, 0), "ring" end
+    return nil, nil
+end
+
+local function advanceHead(source)
+    if source == "priority" then
+        table.remove(H.priorityQueue, 1)
+    elseif source == "ring" then
+        ALC.Core.Queue.ringAdvance(H.queue)
+    end
+end
+
+local function totalPending()
+    return #H.priorityQueue + ((H.queue and H.queue.size) or 0)
+end
+
+-- TTL-evict stale entries from the front of whichever lane is current.
+local function evictStaleHead()
+    local nowSec = time()
+    local ttl = C.RELAY_CHUNK_TTL_S
+    while true do
+        local entry, source = headEntry()
+        if not entry then break end
+        if (nowSec - entry.pushed_at) > ttl then
+            advanceHead(source)
+            ALC.Core.Metrics.inc("chunks_dropped_ttl")
+            H.pendingChunk = nil
+            H.pendingSource = nil
+        else
+            break
+        end
+    end
 end
 
 -- Called on every SPELL_CAST_FAILED sub-event in COMBAT_LOG_EVENT_UNFILTERED.
 -- failedType is the localized fail-reason string the engine read for THIS
 -- event (CLEU arg at C.RELAY_FAILEDTYPE_ARG_INDEX). If it starts with our
 -- sentinel prefix, the previously-applied chunk made it into the log line
--- and the queue head can safely advance. Otherwise the chunk was eaten by
--- an uncovered Lua global or a C-side fail string, so we keep the same
--- head entry and re-apply it on the next event.
+-- and the head can safely advance. Otherwise the chunk was eaten by an
+-- uncovered Lua global or a C-side fail string, so we keep the same head
+-- entry and re-apply it on the next event. Priority lane drains first.
 function H.onSpellCastFailed(failedType)
     if not H.active then return end
-    if not H.queue or H.queue.size == 0 then
+    if totalPending() == 0 then
         H.pendingChunk = nil
+        H.pendingSource = nil
         ensureClean()
         return
     end
 
-    -- Evict stale chunks at the head
-    local nowSec = time()
-    local ttl = C.RELAY_CHUNK_TTL_S
-    while H.queue.size > 0 do
-        local head = ALC.Core.Queue.ringPeek(H.queue, 0)
-        if head and (nowSec - head.pushed_at) > ttl then
-            ALC.Core.Queue.ringAdvance(H.queue)
-            ALC.Core.Metrics.inc("chunks_dropped_ttl")
-            H.pendingChunk = nil
-        else
-            break
-        end
-    end
-    if H.queue.size == 0 then
+    evictStaleHead()
+    if totalPending() == 0 then
         ensureClean()
         return
     end
 
     -- Landed-evidence check: did the prior chunk make it into the log?
-    -- Match the family prefix so both CI and PP chunks land-detect correctly.
+    -- Match the family prefix so CI / PP / TS / KS chunks land-detect alike.
     local prefix = C.RELAY_FAMILY_PREFIX
     local landed = H.pendingChunk
         and type(failedType) == "string"
         and failedType:sub(1, #prefix) == prefix
 
     if landed then
-        ALC.Core.Queue.ringAdvance(H.queue)
+        local landedChunk = H.pendingChunk
+        advanceHead(H.pendingSource)
         ALC.Core.Metrics.inc("chunks_landed")
         H.pendingChunk = nil
-        if H.queue.size == 0 then
+        H.pendingSource = nil
+        -- Fire landed hooks AFTER advancing so a hook that inspects queue
+        -- state sees the post-advance picture. Used by KeystoneScan's toast.
+        fireLandedHooks(landedChunk)
+        if totalPending() == 0 then
             ensureClean()
             return
         end
@@ -173,12 +265,34 @@ function H.onSpellCastFailed(failedType)
 
     -- Apply the (still-)current head; idempotent re-applies are cheap and
     -- keep the rewritten globals fresh in case anything else touched them.
-    local entry = ALC.Core.Queue.ringPeek(H.queue, 0)
+    local entry, source = headEntry()
     if entry then
         applyChunk(entry.chunk)
         H.pendingChunk = entry.chunk
+        H.pendingSource = source
         ALC.Core.Metrics.mark_flush()
     end
+end
+
+-- Keepalive expiry pump. Out of combat there may be no CLEU events to drive
+-- reevaluate(), so a dedicated OnUpdate frame deactivates the relay once the
+-- keepalive window lapses. Self-disables (clears its OnUpdate) when the
+-- window is over to avoid steady-state overhead.
+function H.startKeepalivePump()
+    if not H._kaFrame then
+        H._kaFrame = CreateFrame("Frame", "ALC_RelayKeepalive")
+    end
+    local accum = 0
+    H._kaFrame:SetScript("OnUpdate", function(self, elapsed)
+        accum = accum + elapsed
+        if accum < 0.5 then return end   -- 2 Hz is plenty for a 45s window
+        accum = 0
+        if not H.keepaliveUntil or time() >= H.keepaliveUntil then
+            H.keepaliveUntil = nil
+            self:SetScript("OnUpdate", nil)
+            H.reevaluate()   -- drop out of the out-of-combat keepalive state
+        end
+    end)
 end
 
 -- Activate / deactivate based on scope changes
