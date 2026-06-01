@@ -107,7 +107,7 @@ local function serializeCIToChunks(ci)
     -- Phase 4 frame gate: hand the CI to the FrameBuilder, which bundles it into
     -- an [[ALC_F_...]] frame. Returns an empty list so callers enqueue nothing.
     if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.enabled() then
-        ALC.Capture.FrameBuilder.add(ALC.Capture.FrameBuilder.TYPE.CI, ci)
+        ALC.Capture.FrameBuilder.addCI(ci)  -- keyframe on first sight, else a tiny ref
         return {}
     end
     -- Transport stays base64 (ASCII): the server reads logs through

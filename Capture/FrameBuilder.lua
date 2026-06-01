@@ -18,7 +18,21 @@ ALC.Capture.FrameBuilder = FB
 
 local C = ALC.Core.Constants
 
-FB.TYPE = { CI = 0x01, PP = 0x02, TS = 0x03 }
+FB.TYPE = { CI = 0x01, PP = 0x02, TS = 0x03, KEYFRAME_REF = 0x12 }
+
+-- Delta/keyframe state (per session). A player's gear is sent as a full CI
+-- "keyframe" on first sight; unchanged per-pull re-broadcasts become tiny
+-- references that re-bind the cached keyframe to the new pull. Re-keyframe every
+-- REKEYFRAME_EVERY refs so a lost keyframe orphans at most that many refs.
+FB.sentKeyframes = {}   -- guid -> durable hash (number)
+FB.refsSince = {}       -- guid -> refs emitted since the last keyframe
+FB.REKEYFRAME_EVERY = 8
+-- Fields that change every pull but don't change the player's gear identity;
+-- excluded from the durable hash (and `kf`, which we stamp onto keyframes).
+local VOLATILE = {
+    captured_at = true, captured_for_boss = true, captured_for_pull_id = true,
+    snapshot_serial = true, kf = true,
+}
 
 FB.pending = {}        -- array of { type, body = <ace text> }
 FB.pendingBytes = 0
@@ -78,6 +92,41 @@ function FB.add(recType, struct)
     -- on the max-hold so records accumulate into shared frames in between.
     if FB.pendingBytes >= FB.FRAME_RAW_BUDGET then FB.flush() end
     return true
+end
+
+-- Hash the CI's gear identity (volatile per-pull binding excluded) so the same
+-- player with unchanged gear across pulls produces the same keyframe id.
+local function durableHashCI(ci)
+    local tmp = {}
+    for k, v in pairs(ci) do
+        if not VOLATILE[k] then tmp[k] = v end
+    end
+    return ALC.Core.Hash.hashCI(tmp)
+end
+
+-- CI entry point (delta/keyframe). Keyframe on first sight, gear change, or the
+-- periodic refresh; otherwise a tiny KEYFRAME_REF that re-binds the cached
+-- keyframe to this pull. The server caches keyframes by (guid, kf) and resolves
+-- refs against them. Collapses per-pull re-broadcasts of unchanged gear (the
+-- dominant CI volume in a dungeon) from a full CI to ~50 bytes.
+function FB.addCI(ci)
+    if not FB.enabled() then return false end
+    local guid = (ci.player and ci.player.guid) or ci.captured_by_guid
+    if not guid then return FB.add(FB.TYPE.CI, ci) end
+    local dh = durableHashCI(ci)
+    local refs = FB.refsSince[guid] or 0
+    if FB.sentKeyframes[guid] == dh and refs < FB.REKEYFRAME_EVERY then
+        FB.refsSince[guid] = refs + 1
+        return FB.add(FB.TYPE.KEYFRAME_REF, {
+            g = guid, h = dh,
+            b = ci.captured_for_boss, p = ci.captured_for_pull_id, t = ci.captured_at,
+        })
+    end
+    -- (re)keyframe: first sight, gear change, or periodic refresh
+    FB.sentKeyframes[guid] = dh
+    FB.refsSince[guid] = 0
+    ci.kf = dh
+    return FB.add(FB.TYPE.CI, ci)
 end
 
 -- Ticker entry point: flush only when there's a full batch or the hold expired,

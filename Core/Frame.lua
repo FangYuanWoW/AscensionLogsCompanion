@@ -15,7 +15,7 @@ ALC.Core.Frame = F
 
 F.MAGIC = 0xA1
 F.VERSION = 0x01
-F.TYPE = { CI = 0x01, PP = 0x02, TS = 0x03, KS = 0x04 }
+F.TYPE = { CI = 0x01, PP = 0x02, TS = 0x03, KS = 0x04, KEYFRAME_REF = 0x12 }
 
 local schar, concat, floor = string.char, table.concat, math.floor
 
