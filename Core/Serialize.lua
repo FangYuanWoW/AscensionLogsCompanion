@@ -83,10 +83,11 @@ function S.serializeCI(ci)
     return serialize(ci)
 end
 
--- Codec c2: AceSerializer + deflate WITH the D1 preset dictionary (Core/DictD1.lua).
--- The dictionary is created once via LibDeflate:CreateDictionary and cached.
--- Returns nil if libs/dict/CompressDeflateWithDict are unavailable, so callers
--- degrade to plain c1 deflate. Server decodes with zlib {dictionary} (same bytes).
+-- D1 preset deflate dictionary (Core/DictD1.lua), shared by deflateWithDict
+-- below (the F-frame codec path). Created once via LibDeflate:CreateDictionary
+-- and cached. Returns nil if libs/dict/CompressDeflateWithDict are unavailable;
+-- the FrameBuilder treats that as a loud drop (no legacy fallback). Server
+-- decodes with zlib {dictionary} on the same bytes.
 local cachedDict  -- nil = not tried, false = unavailable, table = ready
 local function getD1Dict()
     if cachedDict ~= nil then return cachedDict or nil end
@@ -104,19 +105,6 @@ local function getD1Dict()
     end)
     cachedDict = (ok and dict) or false
     return cachedDict or nil
-end
-
-function S.serializeCIWithDict(ci)
-    if not ci then return nil end
-    local l = libs()
-    local dict = getD1Dict()
-    if not (l.ser and l.deflate and dict) then return nil end
-    local s = l.ser:Serialize(ci)
-    local ok, out = pcall(function()
-        return l.deflate:CompressDeflateWithDict(s, dict, { level = 5 })
-    end)
-    if not ok then return nil end
-    return out
 end
 
 -- F-frame helpers (codec overhaul Phase 4). A frame bundles several record

@@ -608,34 +608,16 @@ local function shouldSnapshot()
     return true
 end
 
-local function buildChunkEnvelope(sessionId, snapshotId, seq, total, b64)
-    return string.format("[[ALC_TS_v1_%s_%s_%d/%d]]%s",
-        sessionId, snapshotId, seq, total, b64)
-end
-
 local function enqueuePayload(payload, sessionId, snapshotId)
-    -- Phase 4 frame gate: bundle this telemetry snapshot into an [[ALC_F_...]] frame.
-    if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.enabled() then
-        return ALC.Capture.FrameBuilder.add(ALC.Capture.FrameBuilder.TYPE.TS, payload)
-    end
-    -- serializeCI is the generic Ace+Deflate serializer (same path PetPipeline
-    -- reuses). Despite the name, it takes any table.
-    local compressed = ALC.Core.Serialize.serializeCI(payload)
-    if not compressed then return false end
-    local b64 = ALC.Core.Base64.encode(compressed)
-    if not b64 then return false end
-
-    local maxBody = C.CHUNK_PAYLOAD_MAX_BYTES
-    local total = math.ceil(#b64 / maxBody)
-    if total < 1 then total = 1 end
-    for seq = 1, total do
-        local startIdx = (seq - 1) * maxBody + 1
-        local endIdx = math.min(startIdx + maxBody - 1, #b64)
-        ALC.Transport.SpellFailedRelay.enqueue(
-            buildChunkEnvelope(sessionId, snapshotId, seq, total, b64:sub(startIdx, endIdx))
-        )
-    end
-    return true
+    -- NEW-ONLY (codec overhaul): telemetry snapshots ride an [[ALC_F_v1_c2_...]]
+    -- frame via the FrameBuilder (record type TS), which bundles several
+    -- consecutive snapshots into one chunk. The legacy per-TS base64 envelope
+    -- ([[ALC_TS_v1_...]]) was removed - there is no fallback, so a drop warns
+    -- loudly instead of silently degrading.
+    local FB = ALC.Capture.FrameBuilder
+    if FB and FB.add(FB.TYPE.TS, payload) then return true end
+    if FB then FB.warnDrop("TS") end
+    return false
 end
 
 function T.snapshot(reason)

@@ -68,6 +68,37 @@ function FB.enabled()
         and ALC.Core.Serialize.deflateWithDict ~= nil
 end
 
+-- Why the FrameBuilder can't run right now. Used by warnDrop to make the
+-- new-only drop LOUD and self-diagnosing (there is no legacy fallback anymore).
+function FB.disabledReason()
+    if not (_G.ALC_Config and ALC_Config.frame_codec == "c2") then
+        return "frame_codec not 'c2' (SavedVariables override?)"
+    end
+    if ALC.Core.Frame == nil then return "Core.Frame not loaded (restart client)" end
+    if ALC.Core.Serialize.deflateWithDict == nil then
+        return "Serialize.deflateWithDict missing (restart client)"
+    end
+    -- enabled() is true here, so the failure is deeper: the D1 dictionary failed
+    -- to build (CreateDictionary) or libs aren't ready, so deflateWithDict()
+    -- returns nil at compress time.
+    return "D1 dict/libs not ready (deflate returned nil; check /reload was a full restart)"
+end
+
+-- Throttled loud warning for a dropped capture. New-only mode has no legacy
+-- fallback, so a drop is a real data loss the logger should see - but we cap it
+-- to one warn / WARN_THROTTLE_S per context so a persistent misconfig (e.g. dict
+-- never loaded) doesn't spam the 2s telemetry cadence into the chat frame.
+FB._lastWarnAt = FB._lastWarnAt or {}
+FB.WARN_THROTTLE_S = 15
+function FB.warnDrop(context)
+    local now = time()
+    if (FB._lastWarnAt[context] or 0) + FB.WARN_THROTTLE_S > now then return end
+    FB._lastWarnAt[context] = now
+    ALC.Core.Logger.warn(string.format(
+        "[frame] %s dropped - FrameBuilder not running: %s. New-only mode has no legacy fallback.",
+        context, FB.disabledReason()))
+end
+
 -- A pipeline hands a record struct + its type. We AceSerialize it now (cheap)
 -- and hold the text; the whole frame is deflated once at flush. Returns true if
 -- the record was accepted (caller then skips its legacy emit).
@@ -144,9 +175,9 @@ local function buildFrameChunks(sessionId, frameRecords)
     local frameId = toBase36(FB.frameCounter)
     local frame = ALC.Core.Frame.encode(frameRecords)
     local compressed = ALC.Core.Serialize.deflateWithDict(frame)
-    if not compressed then return nil end
+    if not compressed then FB.warnDrop("frame.deflate"); return nil end
     local b64 = ALC.Core.Base64.encode(compressed)
-    if not b64 then return nil end
+    if not b64 then FB.warnDrop("frame.base64"); return nil end
     local maxBody = C.CHUNK_PAYLOAD_MAX_BYTES
     local total = math.ceil(#b64 / maxBody)
     if total < 1 then total = 1 end

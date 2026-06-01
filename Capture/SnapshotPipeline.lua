@@ -27,110 +27,22 @@ local function shouldPublish()
     return true
 end
 
--- Per-session monotonic snapshot counter. Bumps each time we slice a CI
--- into chunks, giving every snapshot a unique short ID that the demuxer
--- can use to group its chunks together regardless of how the encounter
--- detector splits them in time. Encoded in base36 (0-9 a-z) for byte
--- thrift in the chunk header. Covered the v1 → v2 envelope bump.
-P.snapshotCounter = P.snapshotCounter or 0
-
--- Encode a non-negative integer as base36, lower-case, no padding.
--- 1-9999 fits in 1-3 chars; covers an entire raid session comfortably.
-local function toBase36(n)
-    if n == 0 then return "0" end
-    local digits = "0123456789abcdefghijklmnopqrstuvwxyz"
-    local out = ""
-    local x = n
-    while x > 0 do
-        local r = x - math.floor(x / 36) * 36
-        out = digits:sub(r + 1, r + 1) .. out
-        x = math.floor(x / 36)
-    end
-    return out
-end
-
--- Build the chunk wrapper around a raw payload string.
--- Format: [[ALC_CI_v2_<sessionId>_<guid>_<snapshotId>_<seq>/<total>]]<b64>
--- snapshotId is a per-session monotonic counter in base36; the same value
--- stamps every chunk of one snapshot. The demuxer groups chunks by
--- (session, guid, snapshotId), so chunks of one snapshot can never mix
--- with another's even when they straddle an encounter boundary.
--- codec is nil for the legacy base64 path ([[ALC_CI_v2_<sess>...]]) or "c1" for
--- the raw 8-bit transport path ([[ALC_CI_v2_c1_<sess>...]]). The extra token
--- still matches the server's `[[ALC_CI_v2_%` LIKE, and the codec tag tells the
--- demuxer which decoder to use; an old server base64-decodes a c1 payload and
--- fails soft (no ALC data), never breaking ingestion.
-local function buildChunk(sessionId, guid, snapshotId, seq, total, payload, codec)
-    if codec then
-        return string.format("[[ALC_CI_v2_%s_%s_%s_%s_%d/%d]]%s",
-            codec, sessionId, guid, snapshotId, seq, total, payload)
-    end
-    return string.format("[[ALC_CI_v2_%s_%s_%s_%d/%d]]%s",
-        sessionId, guid, snapshotId, seq, total, payload)
-end
-
--- Slice a base64 payload into chunks sized to fit the fail-reason field.
--- All chunks of one snapshot share the same snapshotId so the demuxer
--- can reassemble them as one unit on the server side.
-local function chunkPayload(sessionId, guid, payload, codec)
-    P.snapshotCounter = (P.snapshotCounter or 0) + 1
-    local snapshotId = toBase36(P.snapshotCounter)
-
-    local maxBody = C.CHUNK_PAYLOAD_MAX_BYTES
-    local total = math.ceil(#payload / maxBody)
-    if total < 1 then total = 1 end
-    local chunks = {}
-    for seq = 1, total do
-        local startIdx = (seq - 1) * maxBody + 1
-        local endIdx = math.min(startIdx + maxBody - 1, #payload)
-        -- byte-slicing a raw transport8 payload mid-escape is safe: the server
-        -- concatenates all seq payloads before decoding, restoring the stream.
-        chunks[seq] = buildChunk(sessionId, guid, snapshotId, seq, total, payload:sub(startIdx, endIdx), codec)
-    end
-    return chunks
-end
-
--- Serialize a CI struct into base64-safe chunks ready for relay injection.
--- Test gate (codec overhaul): "legacy" (base64) | "c1" (raw 8-bit transport)
--- | "c2" (c1 + D1 dictionary). Reads ALC_Config.ci_codec, with back-compat for
--- the earlier ci_transport_c1 boolean.
-local function resolveCodec()
-    local cfg = _G.ALC_Config
-    if not cfg then return "legacy" end
-    if cfg.ci_codec then return cfg.ci_codec end
-    if cfg.ci_transport_c1 then return "c1" end
-    return "legacy"
-end
-
+-- Serialize a CI struct for relay injection. NEW-ONLY (codec overhaul): the CI
+-- always rides an [[ALC_F_v1_c2_...]] dict-deflated frame via the FrameBuilder,
+-- which handles delta/keyframe (full CI on first sight, a tiny KEYFRAME_REF for
+-- unchanged gear). The legacy per-CI base64 path ([[ALC_CI_v2_...]], plus the
+-- c1/c2 transport experiments) was removed - there is no fallback. On success we
+-- return an empty list (the frame was enqueued inside the FrameBuilder, so the
+-- caller enqueues nothing); on a hard failure we return nil after a loud,
+-- throttled warn so a dict/libs misconfig is visible instead of silently lost.
 local function serializeCIToChunks(ci)
     if not ci or not ci.session_id or not ci.captured_by_guid then return nil end
-    -- Phase 4 frame gate: hand the CI to the FrameBuilder, which bundles it into
-    -- an [[ALC_F_...]] frame. Returns an empty list so callers enqueue nothing.
-    if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.enabled() then
-        ALC.Capture.FrameBuilder.addCI(ci)  -- keyframe on first sight, else a tiny ref
+    local FB = ALC.Capture.FrameBuilder
+    if FB and FB.addCI(ci) then  -- keyframe on first sight, else a tiny ref
         return {}
     end
-    -- Transport stays base64 (ASCII): the server reads logs through
-    -- readline's UTF-8 decoder, which destroys raw 8-bit bytes. The win is the
-    -- D1 dictionary (c2), which shrinks a CI enough to fit one base64 chunk
-    -- anyway, so a denser transport would not even change the chunk count.
-    local codec = resolveCodec()
-    local compressed
-    if codec == "c2" and ALC.Core.Serialize.serializeCIWithDict then
-        compressed = ALC.Core.Serialize.serializeCIWithDict(ci)  -- dict deflate
-        if not compressed then codec = "legacy" end              -- dict unavailable -> legacy
-    end
-    if not compressed then
-        compressed = ALC.Core.Serialize.serializeCI(ci)          -- plain deflate
-        codec = "legacy"
-    end
-    if not compressed then return nil end
-
-    local payload = ALC.Core.Base64.encode(compressed)
-    if not payload then return nil end
-
-    local codecTag = (codec == "c2") and "c2" or nil
-    return chunkPayload(ci.session_id, ci.player.guid or ci.captured_by_guid, payload, codecTag)
+    if FB then FB.warnDrop("CI") end
+    return nil
 end
 
 -- Rebuild local CI, compare hash, enqueue chunks if changed.

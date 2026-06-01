@@ -7,6 +7,17 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.0 (codec overhaul RELEASED): CI/PP/TS now emit EXCLUSIVELY as
+-- [[ALC_F_v1_c2_...]] dict-deflated frames via FrameBuilder; the legacy
+-- per-family base64 envelopes ([[ALC_CI_/PP_/TS_]]) and the c1/c2 transport
+-- experiments were removed from EMIT. One dict-deflate + base64 per bundled
+-- frame, plus delta/keyframe for gear (full CI on first sight, tiny refs after)
+-- cut relay drains ~2.75x on a real key. frame_codec defaults to "c2" (no /alc
+-- toggle); when the FrameBuilder can't run (dict/libs not ready) the pipelines
+-- drop LOUDLY (throttled warn) rather than silently degrade. KS stays on its own
+-- legacy [[ALC_KS_v1_]] priority lane (unbundled). The server demuxer (decodes
+-- BOTH the new frames AND the legacy envelopes) shipped to prod first; legacy
+-- DECODE stays server-side forever for version skew.
 -- 0.52.0 (pending, dev on feat/keystone-capture; VERSION stays 0.51.0 until
 -- release): KS (keystone) chunk family - fourth ALC family, parallel to CI/PP/
 -- TS. Event-driven (not periodic): one "start" record on MYTHIC_PLUS_STARTED
@@ -34,7 +45,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.51.0"
+C.VERSION = "0.60.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -328,7 +339,12 @@ C.DEFAULT_CONFIG = {
     keystone_enabled     = true,  -- 0.51.x local experiment: KS chunk emission for Mythic+ keystone start/complete lifecycle events (Ascension only; no-op on Epoch). Not yet consumed server-side.
     keystone_keepalive   = true,  -- 0.51.x: on key complete, keep the relay active for KS_KEEPALIVE_S out of combat so an organic failed cast flushes the priority outcome chunk. Set false to drain only while in combat.
     keystone_toast       = true,  -- 0.51.x: show an on-screen toast when the key-outcome chunk is confirmed landed in the combat log.
-    ci_transport_c1      = false, -- DEPRECATED test gate (raw 8-bit transport - abandoned; the server reads logs via readline/UTF-8 which mangles non-ASCII). Superseded by ci_codec/frame_codec.
-    ci_codec             = nil,   -- TEST GATE: "c2" => CI chunks use dict-deflate + base64 ([[ALC_CI_v2_c2_...]]). nil/"legacy" => plain base64. /alc c2 on.
-    frame_codec          = nil,   -- TEST GATE (Phase 4): "c2" => CI/TS/PP records bundle into [[ALC_F_v1_c2_...]] frames (one dict-deflate + base64 per frame). KS stays on its own priority path. nil/"legacy" => each family uses its legacy per-family chunk. /alc frame on.
+    -- 0.53.0 (NEW-ONLY, local/dev): CI/PP/TS ride [[ALC_F_v1_c2_...]] dict-deflated
+    -- frames exclusively; there is no per-family legacy emit path anymore. This
+    -- defaults ON and there is no /alc toggle. Editing this in SavedVariables to
+    -- anything other than "c2" disables the ONLY emit path for CI/PP/TS (KS is
+    -- unaffected - separate priority lane), so the pipelines will warn loudly and
+    -- drop. The deprecated ci_codec / ci_transport_c1 gates were removed with the
+    -- legacy CI base64 path they fed.
+    frame_codec          = "c2",
 }
