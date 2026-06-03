@@ -19,6 +19,28 @@ local function now()
     return GetTime()
 end
 
+-- True while the user has any frame open that reads the single global
+-- inspect buffer: their OWN character pane, or an inspect window on another
+-- player. Both surfaces render equipped-slot tooltips (and the inspect
+-- window also renders the 3D model) from that one buffer. NotifyInspect
+-- repoints it and ClearInspectPlayer wipes it, so the background auto-loop
+-- must do NEITHER while one of these is shown - not start a new inspect,
+-- and not clear a finishing one. Details (gears.lua) and Skada
+-- (LibTalentQuery) take the same stance: gate scheduling on the inspect
+-- frame and never call ClearInspectPlayer at all.
+--
+-- Frame names differ across the supported clients:
+--   Epoch (Kezan/Gurubashi)    : stock CharacterFrame / InspectFrame
+--   Ascension (Bronzebeard/WR) : AscensionCharacterFrame / AscensionInspectFrame
+-- Stock frames are hidden on Ascension's modded UI, so checking both names
+-- per surface covers both clients with one predicate.
+local function inspectBufferInUse()
+    return (CharacterFrame and CharacterFrame:IsShown())
+        or (AscensionCharacterFrame and AscensionCharacterFrame:IsShown())
+        or (InspectFrame and InspectFrame:IsShown())
+        or (AscensionInspectFrame and AscensionInspectFrame:IsShown())
+end
+
 -- Rebuild GUID->unit and roster-guid indices from current roster state.
 -- This avoids repeated UnitGUID("raidN"/"partyN") scans on every inspect tick.
 local function rebuildUnitIndex()
@@ -474,7 +496,17 @@ local function finalizeInspect()
               .. (missingTalents and " missingTalents" or "")))
     end
 
-    ClearInspectPlayer()
+    -- Don't clear the inspect buffer out from under the user. When a peer's
+    -- inspect finalizes (event-driven) at the same moment the user has their
+    -- own pane or an inspect window open - common right after a boss kill,
+    -- when the loop queues a fresh full-raid sweep - ClearInspectPlayer()
+    -- blanks the slot tooltips and resets the 3D model on the frame the user
+    -- is looking at. The next NotifyInspect (ours after the frame closes, or
+    -- the user's own) repoints the buffer anyway, so the clear is optional.
+    -- Matches Details / Skada, which never clear at all.
+    if not inspectBufferInUse() then
+        ClearInspectPlayer()
+    end
     I.inFlight = nil
 end
 
@@ -571,7 +603,7 @@ local function onInspectReady()
         if not unit or UnitGUID(unit) ~= infl.guid then
             -- Target moved / roster changed during the flip-wait window
             I.inFlight = nil
-            ClearInspectPlayer()
+            if not inspectBufferInUse() then ClearInspectPlayer() end
             return
         end
         -- Build the CI now (post-flip). CAO + mystic merge in via
@@ -625,7 +657,7 @@ local function tick()
             local entry = ALC.Capture.InspectCache.get(infl.guid) or {}
             scheduleNext(entry, "timeout")
             ALC.Capture.InspectCache.set(infl.guid, entry)
-            ClearInspectPlayer()
+            if not inspectBufferInUse() then ClearInspectPlayer() end
             I.inFlight = nil
         else
             return  -- still waiting for current inspect
@@ -796,42 +828,23 @@ function I.start()
     I.ticker = ALC.frame
     I.ticker:HookScript("OnUpdate", function(self, elapsed)
         -- Pause the auto-loop while the user has a character pane OR an
-        -- inspect window open. Stock 3.3.5's GameTooltip:SetInventoryItem
-        -- path (and the inspect window's 3D model + equipped-slot tooltips)
-        -- read from the same single global "last-inspected unit" buffer that
-        -- NotifyInspect repoints. Once we fire NotifyInspect on a peer, the
-        -- frame the user is looking at renders gear as bare slot names
-        -- ("Trinket", "Legs") and the inspected model goes naked, until the
-        -- buffer is restored. Same class of global-buffer race v0.30.10
-        -- fixed for Epoch talents; this is the gear-tooltip side. Manual
-        -- /alc inspect-now bypasses by calling tick() directly.
+        -- inspect window open (see inspectBufferInUse). Firing NotifyInspect
+        -- on a peer repoints the single global inspect buffer, so the frame
+        -- the user is looking at renders gear as bare slot names and the
+        -- inspected model goes naked until the buffer is restored. Same class
+        -- of global-buffer race v0.30.10 fixed for Epoch talents.
         --
-        -- The character-pane gate (v0.30.12) only covered the user's OWN
+        -- The original gate (v0.30.12) only covered the user's OWN character
         -- pane; it missed the case where the user right-click → Inspects a
-        -- raider. There the INSPECT frame is open (not the character pane),
-        -- so the loop kept clobbering the buffer and stripping the target's
-        -- tooltips/model. Details (gears.lua) and Skada (LibTalentQuery)
-        -- both already stand down on an open inspect frame; ALC was the only
-        -- inspect-firing addon that didn't. Inspect-frame gate added so all
-        -- three yield consistently.
+        -- raider (the INSPECT frame, not the character pane). 0.60.1 added the
+        -- inspect-frame names here; finalizeInspect's ClearInspectPlayer is
+        -- gated on the same predicate so an in-flight peer finalizing mid-look
+        -- can't wipe the user's open window either.
         --
-        -- Frame names differ across the supported clients:
-        --   Epoch (Kezan/Gurubashi)    : stock CharacterFrame / InspectFrame
-        --   Ascension (Bronzebeard/WR) : AscensionCharacterFrame /
-        --                                AscensionInspectFrame
-        --     (char pane probed 2026-05-03 via /alcprobe find-charframe;
-        --      inspect frame name confirmed against Details gears.lua, which
-        --      gates its own ilvl scan on AscensionInspectFrame:IsShown())
-        -- Stock frames are hidden on Ascension's modded UI, so gating on them
-        -- alone does nothing on BB. Both names per surface cover both clients
-        -- with one code path.
-        --
+        -- Manual /alc inspect-now bypasses by calling tick() directly.
         -- Coverage cost: up to one interval of delay when the user closes
         -- the pane / inspect window.
-        if (CharacterFrame and CharacterFrame:IsShown())
-           or (AscensionCharacterFrame and AscensionCharacterFrame:IsShown())
-           or (InspectFrame and InspectFrame:IsShown())
-           or (AscensionInspectFrame and AscensionInspectFrame:IsShown()) then
+        if inspectBufferInUse() then
             return
         end
         accum = accum + elapsed

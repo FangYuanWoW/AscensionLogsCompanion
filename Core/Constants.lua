@@ -7,6 +7,18 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.2 (inspect hotfix follow-up): close the in-flight finalize race that
+-- v0.60.1 left open. v0.60.1 stopped the loop STARTING new inspects while an
+-- inspect window was open, but a peer inspect already in flight still
+-- finalized (event-driven) and called ClearInspectPlayer(), wiping the
+-- buffer the user's open window reads from. Symptom: right after a boss kill
+-- (loop queues a fresh full-raid sweep) the FIRST inspect-window open showed
+-- no tooltips / naked model, a second open of the same player was fine.
+-- Fix: gate every ClearInspectPlayer() call on the new inspectBufferInUse()
+-- predicate (character pane OR inspect window shown), so a finishing peer
+-- inspect can't clear the buffer out from under the user. Details and Skada
+-- never call ClearInspectPlayer at all; the next NotifyInspect repoints the
+-- buffer regardless, so the clear is optional. No transport/codec changes.
 -- 0.60.1 (inspect hotfix): the background inspect loop now stands down while
 -- the user has an INSPECT window open, not just their own character pane.
 -- WoW 3.3.5 has a single global last-inspected-unit buffer; firing
@@ -58,7 +70,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.1"
+C.VERSION = "0.60.2"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
