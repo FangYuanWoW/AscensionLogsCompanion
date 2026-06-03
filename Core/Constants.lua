@@ -7,6 +7,20 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.4 (own-CI hotfix + guild field): two changes.
+-- (1) Fix the logger's own gear/mystic/talents rendering blank on their own
+-- report - a regression since the 0.60.0 codec overhaul. The own CI is
+-- delta-encoded like peers (keyframe on first sight, then KEYFRAME_REFs), but
+-- the own keyframe is only emitted once at login/zone-in (pre-combat): the
+-- relay can't drain it out of combat, the pull-start clearQueue wipes it, and
+-- every later own publish is a ref the server can't resolve without the
+-- keyframe -> no local row. (Peers are immune: re-inspected every boss, so
+-- their keyframes land mid-session.) Fix: at PLAYER_REGEN_DISABLED bust
+-- lastOwnHash + FrameBuilder.forceKeyframe(ownGuid) so a full own keyframe
+-- re-lands inside each pull's logged window.
+-- (2) Add the guild NAME to the ci.player blob (the rich {name,rank_name,
+-- rank_index} stays at ci.guild). Additive; backend ignores unknown fields.
+-- No transport/codec changes; 0.60.0 wire format unchanged.
 -- 0.60.3 (empty-gear hotfix): stop the boss-transition re-inspect race from
 -- blanking out raiders' gear. On a boss pull EncounterTracker re-queues the
 -- whole raid for an immediate re-inspect; on the Epoch profile the inspect
@@ -84,7 +98,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.3"
+C.VERSION = "0.60.4"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

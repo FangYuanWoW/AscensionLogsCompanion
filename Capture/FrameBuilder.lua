@@ -135,6 +135,19 @@ local function durableHashCI(ci)
     return ALC.Core.Hash.hashCI(tmp)
 end
 
+-- Drop cached keyframe state for a GUID so the next addCI re-emits a full CI
+-- keyframe instead of a KEYFRAME_REF. Used to guarantee the logger's OWN
+-- keyframe lands inside a pull's logged combat window: the own keyframe is
+-- otherwise emitted just once at login/zone-in (pre-combat), where the relay
+-- can't drain it and the pull-start clearQueue wipes it, leaving only refs the
+-- server can never resolve - so the logger renders blank on their own report.
+-- Peers self-heal (re-inspected every boss); the logger never re-inspects self.
+function FB.forceKeyframe(guid)
+    if not guid then return end
+    FB.sentKeyframes[guid] = nil
+    FB.refsSince[guid] = nil
+end
+
 -- CI entry point (delta/keyframe). Keyframe on first sight, gear change, or the
 -- periodic refresh; otherwise a tiny KEYFRAME_REF that re-binds the cached
 -- keyframe to this pull. The server caches keyframes by (guid, kf) and resolves

@@ -329,6 +329,20 @@ function P.start()
             ALC.Transport.SpellFailedRelay.clearQueue()
         end
         P.lastPeerEnqueued = {}
+
+        -- Force the logger's OWN CI to re-keyframe and re-publish this pull.
+        -- The own keyframe is otherwise emitted just once at login/zone-in
+        -- (pre-combat), where the relay can't drain it and the clearQueue above
+        -- wipes it; every later own publish is then a KEYFRAME_REF the server
+        -- can't resolve, so the logger renders blank on their own report
+        -- (regression since the 0.60.0 codec overhaul). Busting lastOwnHash
+        -- makes publishOwnIfChanged actually re-emit, and forceKeyframe makes
+        -- that emit a full keyframe that lands inside this pull's logged window.
+        P.lastOwnHash = nil
+        if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.forceKeyframe then
+            ALC.Capture.FrameBuilder.forceKeyframe(UnitGUID("player"))
+        end
+
         P.publishAllDeferred()
     end)
     -- Periodic peer republish: 30s tick (best-effort; 3.3.5 may lack C_Timer).
