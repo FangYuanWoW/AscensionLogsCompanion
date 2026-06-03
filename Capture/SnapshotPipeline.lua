@@ -27,6 +27,18 @@ local function shouldPublish()
     return true
 end
 
+-- A peer CI is only worth broadcasting once it carries gear. An inspect that
+-- finalized with zero gear slots (the boss-transition re-inspect race, see
+-- InspectLoop) would otherwise ride a frame as a naked keyframe and shadow a
+-- good capture in the backend's per-pull selection. InspectLoop already
+-- carries forward last-known-good gear when it can; this is the final guard
+-- for the cold-start case (peer never successfully gear-read yet) so an empty
+-- CI never leaves the client. No player is ever legitimately gearless, so an
+-- empty gear list always means capture failure, not a real naked character.
+local function peerCIHasGear(ci)
+    return ci and ci.gear and #ci.gear > 0
+end
+
 -- Serialize a CI struct for relay injection. NEW-ONLY (codec overhaul): the CI
 -- always rides an [[ALC_F_v1_c2_...]] dict-deflated frame via the FrameBuilder,
 -- which handles delta/keyframe (full CI on first sight, a tiny KEYFRAME_REF for
@@ -122,7 +134,7 @@ function P.publishPeerInspects()
 
     local count = 0
     for guid, entry in pairs(cache) do
-        if entry.ci and entry.last_success_at then
+        if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
             local key = guid .. ":" .. tostring(entry.last_success_at)
                         .. ":" .. tostring(currentPullId)
             if P.lastPeerEnqueued[key] ~= true then
@@ -209,7 +221,7 @@ function P.publishPeerInspectsDeferred()
 
     local queued = 0
     for guid, entry in pairs(cache) do
-        if entry.ci and entry.last_success_at then
+        if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
             local key = guid .. ":" .. tostring(entry.last_success_at)
                         .. ":" .. tostring(currentPullId)
             if P.lastPeerEnqueued[key] ~= true then

@@ -7,6 +7,20 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.3 (empty-gear hotfix): stop the boss-transition re-inspect race from
+-- blanking out raiders' gear. On a boss pull EncounterTracker re-queues the
+-- whole raid for an immediate re-inspect; on the Epoch profile the inspect
+-- finalizes the moment INSPECT_TALENT_READY fires, but the inspected unit's
+-- GetInventoryItemLink often hasn't ripened yet as raiders scatter past the
+-- 28y inspect range, so readGear() returns zero slots. That empty read was
+-- finalized as success and cached/published as the boss keyframe with a newer
+-- captured_at, so it shadowed the good trash-pull capture and the player
+-- rendered naked on the boss tab. Fix: an empty gear read is no longer a clean
+-- success - InspectLoop.finalizeInspect carries the last-known-good gear
+-- forward onto the re-stamped CI (talents/spec stay fresh) and retries up to
+-- INSPECT_GEAR_RETRY_MAX times to catch a real gear swap, and SnapshotPipeline
+-- never broadcasts a gearless peer CI (cold-start guard). No transport/codec
+-- changes; 0.60.0 wire format unchanged.
 -- 0.60.2 (inspect hotfix follow-up): close the in-flight finalize race that
 -- v0.60.1 left open. v0.60.1 stopped the loop STARTING new inspects while an
 -- inspect window was open, but a peer inspect already in flight still
@@ -70,7 +84,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.2"
+C.VERSION = "0.60.3"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -180,6 +194,11 @@ C.INSPECT_RESCAN_MS      = 300000  -- 5 min (used when boss tracking pins a curr
 C.INSPECT_NOBOSS_RESCAN_MS = 60000   -- 1 min fallback when no boss is tracked (heroic dungeons, custom content, EncounterTracker silent failures)
 C.INSPECT_STALE_MS       = 600000  -- 10 min
 C.INSPECT_BACKOFF_MAX_S  = 60
+-- Max quick retries when an inspect finalizes with zero gear slots (the
+-- boss-transition re-inspect race - gear data not yet ripened). Each retry
+-- reuses the existing partial-retry cadence (next_scan_at = +5s). Counter
+-- resets on any non-empty read and per new boss. See InspectLoop.finalizeInspect.
+C.INSPECT_GEAR_RETRY_MAX = 2
 
 -- SavedVariables bounds
 C.INSPECT_CACHE_MAX_ENTRIES = 100
