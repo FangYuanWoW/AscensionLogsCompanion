@@ -44,6 +44,7 @@ local function invalidateCacheForNewBoss(newBossName)
             entry.next_scan_at = now  -- front of queue
             entry.backoff_until = 0
             entry.inspect_unavailable = false  -- retry even if previously gave up
+            entry.gear_retry_attempts = nil  -- fresh empty-gear retry budget per boss
             ALC.Capture.InspectCache.set(guid, entry)
             moved = moved + 1
         end

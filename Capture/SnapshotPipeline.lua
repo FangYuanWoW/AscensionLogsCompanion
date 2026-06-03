@@ -27,6 +27,18 @@ local function shouldPublish()
     return true
 end
 
+-- A peer CI is only worth broadcasting once it carries gear. An inspect that
+-- finalized with zero gear slots (the boss-transition re-inspect race, see
+-- InspectLoop) would otherwise ride a frame as a naked keyframe and shadow a
+-- good capture in the backend's per-pull selection. InspectLoop already
+-- carries forward last-known-good gear when it can; this is the final guard
+-- for the cold-start case (peer never successfully gear-read yet) so an empty
+-- CI never leaves the client. No player is ever legitimately gearless, so an
+-- empty gear list always means capture failure, not a real naked character.
+local function peerCIHasGear(ci)
+    return ci and ci.gear and #ci.gear > 0
+end
+
 -- Serialize a CI struct for relay injection. NEW-ONLY (codec overhaul): the CI
 -- always rides an [[ALC_F_v1_c2_...]] dict-deflated frame via the FrameBuilder,
 -- which handles delta/keyframe (full CI on first sight, a tiny KEYFRAME_REF for
@@ -122,7 +134,7 @@ function P.publishPeerInspects()
 
     local count = 0
     for guid, entry in pairs(cache) do
-        if entry.ci and entry.last_success_at then
+        if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
             local key = guid .. ":" .. tostring(entry.last_success_at)
                         .. ":" .. tostring(currentPullId)
             if P.lastPeerEnqueued[key] ~= true then
@@ -209,7 +221,7 @@ function P.publishPeerInspectsDeferred()
 
     local queued = 0
     for guid, entry in pairs(cache) do
-        if entry.ci and entry.last_success_at then
+        if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
             local key = guid .. ":" .. tostring(entry.last_success_at)
                         .. ":" .. tostring(currentPullId)
             if P.lastPeerEnqueued[key] ~= true then
@@ -317,6 +329,20 @@ function P.start()
             ALC.Transport.SpellFailedRelay.clearQueue()
         end
         P.lastPeerEnqueued = {}
+
+        -- Force the logger's OWN CI to re-keyframe and re-publish this pull.
+        -- The own keyframe is otherwise emitted just once at login/zone-in
+        -- (pre-combat), where the relay can't drain it and the clearQueue above
+        -- wipes it; every later own publish is then a KEYFRAME_REF the server
+        -- can't resolve, so the logger renders blank on their own report
+        -- (regression since the 0.60.0 codec overhaul). Busting lastOwnHash
+        -- makes publishOwnIfChanged actually re-emit, and forceKeyframe makes
+        -- that emit a full keyframe that lands inside this pull's logged window.
+        P.lastOwnHash = nil
+        if ALC.Capture.FrameBuilder and ALC.Capture.FrameBuilder.forceKeyframe then
+            ALC.Capture.FrameBuilder.forceKeyframe(UnitGUID("player"))
+        end
+
         P.publishAllDeferred()
     end)
     -- Periodic peer republish: 30s tick (best-effort; 3.3.5 may lack C_Timer).

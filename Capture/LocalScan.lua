@@ -26,6 +26,7 @@ local function playerInfo()
         class = classToken,
         gender = gender,
         level = level,
+        guild = (GetGuildInfo("player")),  -- guild name on the player blob (full {name,rank} stays at ci.guild)
     }
 end
 
@@ -238,6 +239,7 @@ function L.buildInspectCI(unit, sessionId)
             class = classToken,
             gender = UnitSex(unit),
             level = UnitLevel(unit),
+            guild = (GetGuildInfo(unit)),  -- guild name on the player blob (full {name,rank} stays at ci.guild)
         },
         guild = guildInfo(unit),
         specialization = {

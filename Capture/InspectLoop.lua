@@ -288,6 +288,7 @@ local function scheduleNext(entry, outcome)
     if outcome == "success" then
         entry.failure_streak = 0
         entry.partial_attempts = nil  -- reset on a fully-successful capture
+        entry.gear_retry_attempts = nil  -- reset empty-gear retry counter too
         entry.last_success_at = nowSec
         entry.next_scan_at = nowSec + (C.INSPECT_RESCAN_MS / 1000)
         ALC.Core.Metrics.inc("inspect_success")
@@ -394,6 +395,30 @@ local function finalizeInspect()
         end
 
         local entry = ALC.Capture.InspectCache.get(infl.guid) or {}
+
+        -- Empty-gear guard (boss-transition re-inspect race). When a boss
+        -- pins, EncounterTracker re-queues the whole raid for an immediate
+        -- re-inspect. On the Epoch profile we finalize the moment
+        -- INSPECT_TALENT_READY fires, but the inspected unit's gear
+        -- (GetInventoryItemLink) often hasn't ripened yet as raiders scatter
+        -- past the 28y inspect range at pull start - so readGear() comes back
+        -- with zero slots. Caching/publishing that empty read as the boss
+        -- keyframe is what made players render naked on the boss tab even
+        -- though we had captured their gear seconds earlier on the trash pull.
+        --
+        -- Never let an empty gear read replace gear we already hold: carry the
+        -- last-known-good gear forward onto this freshly-stamped CI (talents /
+        -- spec / mystic on `ci` stay fresh). The bounded retry below still
+        -- chases a fresh full read so a genuine mid-raid gear swap that the
+        -- racey first read missed is captured on a follow-up tick.
+        local prevGear = entry.ci and entry.ci.gear
+        local freshGearEmpty = (not ci.gear) or (#ci.gear == 0)
+        local reusedGear = false
+        if freshGearEmpty and prevGear and #prevGear > 0 then
+            ci.gear = prevGear
+            reusedGear = true
+        end
+
         entry.ci = ci
         entry.received_via = "inspect"
         local tracker = ALC.Capture.EncounterTracker
@@ -431,6 +456,23 @@ local function finalizeInspect()
                 outcome = "partial"
             end
             -- 2nd attempt also incomplete -> accept; back to normal schedule
+        end
+
+        -- Empty fresh gear read: retry quickly (bounded) to ripen the data or
+        -- catch a gear swap. This fires only on a genuinely empty read - an
+        -- in-range peer with ripe data reads full gear and skips this. We may
+        -- have reused cached gear above (so the published CI isn't naked), but
+        -- an empty fresh read still means we lack THIS pull's gear, so keep
+        -- trying. Counter resets on any non-empty read and per new boss
+        -- (EncounterTracker.invalidateCacheForNewBoss).
+        if freshGearEmpty then
+            entry.gear_retry_attempts = (entry.gear_retry_attempts or 0) + 1
+            if entry.gear_retry_attempts <= C.INSPECT_GEAR_RETRY_MAX then
+                outcome = "partial"
+            end
+            ALC.Core.Metrics.inc("inspect_empty_gear")
+        else
+            entry.gear_retry_attempts = nil  -- got real gear this read
         end
         -- Always advance last_success_at on a successful inspect. Earlier
         -- versions reverted it when gear was unchanged so SnapshotPipeline's
@@ -486,14 +528,16 @@ local function finalizeInspect()
 
         ALC.Capture.InspectCache.set(infl.guid, entry)
         local cycleTime = GetTime() - infl.startedAt
-        ALC.Core.Logger.debug(string.format("Captured CI for %s [boss=%s, ca=%s me=%s, %.2fs] outcome=%s%s",
+        ALC.Core.Logger.debug(string.format("Captured CI for %s [boss=%s, ca=%s me=%s, gear=%d, %.2fs] outcome=%s%s",
             UnitName(unit) or infl.guid,
             tostring(entry.captured_for_boss),
             tostring(infl.gotCA), tostring(infl.gotMystic),
+            (ci and ci.gear and #ci.gear) or 0,
             cycleTime, outcome,
             (missingCAO and " missingCAO" or "")
               .. (missingMystic and " missingMystic" or "")
-              .. (missingTalents and " missingTalents" or "")))
+              .. (missingTalents and " missingTalents" or "")
+              .. (freshGearEmpty and (reusedGear and " emptyGear(reused)" or " emptyGear") or "")))
     end
 
     -- Don't clear the inspect buffer out from under the user. When a peer's
