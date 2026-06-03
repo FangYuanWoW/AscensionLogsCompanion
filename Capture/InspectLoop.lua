@@ -723,14 +723,13 @@ local function tick()
                     newDiverges, UnitName(unit) or deferredGuid))
             end
 
-            -- Close the InspectFrame opened by InspectUnit() in tick(). We
-            -- SetAlpha(0)'d it to keep it invisible while events fired; now
-            -- that we've read what we need, hide it and restore alpha so the
-            -- user's next manual right-click→Inspect renders normally.
-            if _G.InspectFrame then
-                pcall(InspectFrame.Hide, InspectFrame)
-                pcall(InspectFrame.SetAlpha, InspectFrame, 1)
-            end
+            -- NOTE: this used to Hide()/SetAlpha(1) the InspectFrame to clean
+            -- up a frame ALC itself opened via InspectUnit()+SetAlpha(0). That
+            -- trick was removed (tick() now fires plain NotifyInspect, which
+            -- opens no visible frame), so the only InspectFrame that can be
+            -- shown here is the USER's own manual inspect window. Hiding it
+            -- slammed the player's inspect window shut mid-look (stock
+            -- InspectFrame is the visible inspect window on Epoch). Removed.
         end
 
         if _G.C_Timer and C_Timer.After then
@@ -796,30 +795,43 @@ function I.start()
     local accum = 0
     I.ticker = ALC.frame
     I.ticker:HookScript("OnUpdate", function(self, elapsed)
-        -- Pause the auto-loop while the user has their own character pane
-        -- open. Stock 3.3.5's GameTooltip:SetInventoryItem path for the
-        -- character-pane equipped slots reads from the same single global
-        -- "last-inspected unit" buffer that NotifyInspect repoints. Once
-        -- we fire NotifyInspect on a peer, the player's own gear tooltips
-        -- render as bare slot names ("Trinket", "Legs") instead of the
-        -- full item, until the buffer is restored. Same class of
-        -- global-buffer race v0.30.10 fixed for Epoch talents; this is
-        -- the gear-tooltip side. Manual /alc inspect-now bypasses by
-        -- calling tick() directly.
+        -- Pause the auto-loop while the user has a character pane OR an
+        -- inspect window open. Stock 3.3.5's GameTooltip:SetInventoryItem
+        -- path (and the inspect window's 3D model + equipped-slot tooltips)
+        -- read from the same single global "last-inspected unit" buffer that
+        -- NotifyInspect repoints. Once we fire NotifyInspect on a peer, the
+        -- frame the user is looking at renders gear as bare slot names
+        -- ("Trinket", "Legs") and the inspected model goes naked, until the
+        -- buffer is restored. Same class of global-buffer race v0.30.10
+        -- fixed for Epoch talents; this is the gear-tooltip side. Manual
+        -- /alc inspect-now bypasses by calling tick() directly.
+        --
+        -- The character-pane gate (v0.30.12) only covered the user's OWN
+        -- pane; it missed the case where the user right-click → Inspects a
+        -- raider. There the INSPECT frame is open (not the character pane),
+        -- so the loop kept clobbering the buffer and stripping the target's
+        -- tooltips/model. Details (gears.lua) and Skada (LibTalentQuery)
+        -- both already stand down on an open inspect frame; ALC was the only
+        -- inspect-firing addon that didn't. Inspect-frame gate added so all
+        -- three yield consistently.
         --
         -- Frame names differ across the supported clients:
-        --   Epoch (Kezan/Gurubashi)    : stock CharacterFrame
-        --   Ascension (Bronzebeard/WR) : custom AscensionCharacterFrame
-        --     (probed 2026-05-03 via /alcprobe find-charframe before/after
-        --      delta - only frame that newly appears when the pane opens)
-        -- Stock CharacterFrame is hidden on Ascension's modded UI, so
-        -- gating on it alone does nothing on BB. Both checks together
-        -- cover both clients with one code path.
+        --   Epoch (Kezan/Gurubashi)    : stock CharacterFrame / InspectFrame
+        --   Ascension (Bronzebeard/WR) : AscensionCharacterFrame /
+        --                                AscensionInspectFrame
+        --     (char pane probed 2026-05-03 via /alcprobe find-charframe;
+        --      inspect frame name confirmed against Details gears.lua, which
+        --      gates its own ilvl scan on AscensionInspectFrame:IsShown())
+        -- Stock frames are hidden on Ascension's modded UI, so gating on them
+        -- alone does nothing on BB. Both names per surface cover both clients
+        -- with one code path.
         --
         -- Coverage cost: up to one interval of delay when the user closes
-        -- the pane.
+        -- the pane / inspect window.
         if (CharacterFrame and CharacterFrame:IsShown())
-           or (AscensionCharacterFrame and AscensionCharacterFrame:IsShown()) then
+           or (AscensionCharacterFrame and AscensionCharacterFrame:IsShown())
+           or (InspectFrame and InspectFrame:IsShown())
+           or (AscensionInspectFrame and AscensionInspectFrame:IsShown()) then
             return
         end
         accum = accum + elapsed

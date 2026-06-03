@@ -7,6 +7,19 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.1 (inspect hotfix): the background inspect loop now stands down while
+-- the user has an INSPECT window open, not just their own character pane.
+-- WoW 3.3.5 has a single global last-inspected-unit buffer; firing
+-- NotifyInspect on a peer while the user inspects a raider stripped that
+-- target's equipped-slot tooltips to bare names and reset the 3D model to
+-- naked. The v0.30.12 pause gate only covered the user's own character pane
+-- (AscensionCharacterFrame); the inspect-frame case (AscensionInspectFrame /
+-- stock InspectFrame) was missed. Details and Skada already yield on an open
+-- inspect frame; ALC was the only inspect-firing addon that didn't. Also
+-- removed an orphaned InspectFrame:Hide() in the deferred vanity rescan -
+-- ALC no longer opens its own inspect frame, so that Hide() only ever slammed
+-- shut the user's manual inspect window (visible as the stock InspectFrame on
+-- Epoch). No transport/codec changes; 0.60.0 wire format unchanged.
 -- 0.60.0 (codec overhaul RELEASED): CI/PP/TS now emit EXCLUSIVELY as
 -- [[ALC_F_v1_c2_...]] dict-deflated frames via FrameBuilder; the legacy
 -- per-family base64 envelopes ([[ALC_CI_/PP_/TS_]]) and the c1/c2 transport
@@ -45,7 +58,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.0"
+C.VERSION = "0.60.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
