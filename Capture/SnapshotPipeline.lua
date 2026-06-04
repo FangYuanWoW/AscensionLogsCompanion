@@ -295,6 +295,79 @@ local function onLogin()
     end
 end
 
+-- C_Timer.After with the OnUpdate fallback some 3.3.5 forks need.
+local function afterDelay(delay, fn)
+    if _G.C_Timer and type(C_Timer.After) == "function" then
+        C_Timer.After(delay, fn)
+    else
+        local f = CreateFrame("Frame")
+        local startAt = GetTime()
+        f:SetScript("OnUpdate", function(self)
+            if GetTime() - startAt >= delay then
+                self:SetScript("OnUpdate", nil); fn()
+            end
+        end)
+    end
+end
+
+-- Settle-aware own-CI refresh for spec / build / mystic-enchant changes.
+--
+-- The change events fire BEFORE the client-side build has fully settled:
+-- GetActiveSpecID and the CAO talent reads in readCAOForUnit("player") can
+-- still return the PRE-swap build for a beat (observed live: own CI hash stayed
+-- unchanged through the learn/unlearn burst, then flipped seconds later). A
+-- single immediate re-read therefore misses the swap, which is why the logger's
+-- own respec was captured only intermittently. So we:
+--   1. (Ascension only) kick a per-unit-keyed self CAO inspect to nudge the
+--      client cache. C_CharacterAdvancement.InspectUnit is per-unit-keyed (see
+--      InspectLoop note), NOT the global NotifyInspect buffer, so this can't
+--      clobber an in-flight peer capture. Epoch has no C_CharacterAdvancement
+--      and reads own talents straight from GetTalentInfo, so it's skipped there.
+--   2. Re-read publishOwnIfChanged on a short backoff. publishOwnIfChanged
+--      hash-dedups, so the first re-read that sees the settled build publishes
+--      and the rest are no-ops. The whole burst of change events coalesces into
+--      one backoff schedule via the ownRefreshScheduled guard.
+-- On an Ascension CAO spec swap the new active build is readable almost
+-- immediately, but GetActiveSpecID / the per-talent reads in
+-- readCAOForUnit("player") can lag the swap event by a beat. We can't watch the
+-- content hash to detect "settled" because publishOwnIfChanged hashes the whole
+-- CI INCLUDING captured_at (a wall-clock timestamp), so the hash changes every
+-- second regardless of build - it only dedups reads within the same second.
+-- So we just re-read at a few fixed offsets past the swap: the last one is well
+-- clear of any settle lag, and each captures whatever the build is then.
+-- publishOwnIfChanged still emits a frame each time, but these are pre-pull
+-- keyframes (you can't swap spec in combat) and the next pull's
+-- PLAYER_REGEN_DISABLED re-read + force-keyframe lands the authoritative one
+-- inside the logged window anyway. The ownRefreshScheduled guard coalesces the
+-- burst of swap events into a single set of re-reads.
+local OWN_REFRESH_STEPS = { 2.0, 6.0 }
+P.ownRefreshScheduled = false
+local function scheduleOwnRefresh(reason)
+    if P.ownRefreshScheduled then return end
+    P.ownRefreshScheduled = true
+
+    -- Ascension only: a per-unit-keyed self CAO inspect nudges the client to
+    -- refresh the own build cache (per-unit, NOT the global NotifyInspect
+    -- buffer the peer loop guards, so it can't clobber an in-flight peer).
+    -- Epoch has no C_CharacterAdvancement; it reads own talents from
+    -- GetTalentInfo, which is fresh on the talent event.
+    if ALC.Core.Profile and ALC.Core.Profile.isAscension()
+       and _G.C_CharacterAdvancement
+       and type(_G.C_CharacterAdvancement.InspectUnit) == "function"
+       and not (ALC.Capture.InspectLoop and ALC.Capture.InspectLoop.inFlight) then
+        pcall(_G.C_CharacterAdvancement.InspectUnit, "player")
+    end
+
+    for idx, t in ipairs(OWN_REFRESH_STEPS) do
+        afterDelay(t, function()
+            ALC.Core.Logger.debug("Own refresh re-read @" .. t .. "s (" .. tostring(reason) .. ")")
+            P.publishOwnIfChanged()
+            if idx == #OWN_REFRESH_STEPS then P.ownRefreshScheduled = false end
+        end)
+    end
+end
+P.scheduleOwnRefresh = scheduleOwnRefresh
+
 function P.start()
     ALC.Core.Logger.debug("SnapshotPipeline.start() invoked")
     -- Triggers that may have changed own CI. All event-fire logs are debug
@@ -309,8 +382,40 @@ function P.start()
         P.publishOwnIfChanged()
     end)
     ALC.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", P.publishOwnIfChanged)
-    ALC.RegisterEvent("PLAYER_TALENT_UPDATE", P.publishOwnIfChanged)
-    ALC.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", P.publishOwnIfChanged)
+
+    -- Spec / build / mystic-enchant change. These all route through
+    -- scheduleOwnRefresh (settle-aware re-read) instead of a single immediate
+    -- publish, because the own build reads stale for a beat after the event.
+    -- Registered per-flavor as a union; TryRegisterEvent silently skips the
+    -- names the running client doesn't know:
+    --   * Epoch (stock WotLK): PLAYER_TALENT_UPDATE / ACTIVE_TALENT_GROUP_CHANGED
+    --     fire on talent edits and dual-spec swaps. Both exist on Ascension too
+    --     but do NOT fire on a C_CharacterAdvancement spec swap.
+    --   * Ascension (C_CharacterAdvancement): the native CA + mystic-link events
+    --     are what actually fire on a CAO spec/build/ME change. Missing these is
+    --     why the logger's own mid-session respec went uncaptured while peers
+    --     (refreshed by the inspect loop) stayed correct.
+    local function onSpecChange(event)
+        ALC.Core.Logger.debug("Pipeline got " .. event .. " -> scheduleOwnRefresh")
+        scheduleOwnRefresh(event)
+    end
+    ALC.RegisterEvent("PLAYER_TALENT_UPDATE", onSpecChange)
+    ALC.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", onSpecChange)
+    local CA_CHANGE_EVENTS = {
+        "ASCENSION_CA_SPECIALIZATION_ACTIVE_ID_CHANGED", -- active spec swap
+        "CHARACTER_ADVANCEMENT_UPDATE_ENTRIES_RESULT",   -- build applied/settled
+        "CHARACTER_ADVANCEMENT_LEARN_RESULT",            -- talent learned
+        "CHARACTER_ADVANCEMENT_UNLEARN_RESULT",          -- talent unlearned
+        "MYSTIC_ENCHANT_SPECIALIZATION_LINK_UPDATED",    -- ME preset re-linked on swap
+    }
+    local registered = {}
+    for _, ev in ipairs(CA_CHANGE_EVENTS) do
+        if ALC.TryRegisterEvent(ev, onSpecChange) then
+            registered[#registered + 1] = ev
+        end
+    end
+    ALC.Core.Logger.debug("Spec-change events registered: "
+        .. (table.concat(registered, ", ") ~= "" and table.concat(registered, ", ") or "(none on this client)"))
     ALC.RegisterEvent("PLAYER_REGEN_DISABLED", function()
         ALC.Core.Logger.debug("Pipeline got PLAYER_REGEN_DISABLED")
         -- New pull starts: clear any chunks left over from the prior pull's
