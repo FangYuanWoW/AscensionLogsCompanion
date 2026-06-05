@@ -7,6 +7,31 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.60.6 (peer-instance freshness): re-stamp a peer CI's instance from the
+-- logger's LIVE GetInstanceInfo at broadcast time, instead of carrying the value
+-- frozen when that peer was last inspected. Instance (zone + difficulty) is a
+-- "where is the logger now" property shared by the whole raid, but a re-broadcast
+-- peer CI (the dominant CI volume) previously re-stamped only boss/pull and left
+-- ci.instance untouched - so after the raid changed zones, cached peers kept
+-- emitting the OLD zone/difficulty until each happened to be re-inspected.
+-- Smoking gun: report 10627 / encounter 340057 (Snowgrave / Heroic) had 20 of 22
+-- CIs stamped "Molten Core / Ascended" (the raid's prior instance), which is not
+-- unanimous, so the backend's ALC difficulty fallback bailed and the kill
+-- defaulted to 'normal'. Fix stamps live instance in both broadcast paths
+-- (SnapshotPipeline.publishPeerInspects + the deferred drainDeferQueue); the
+-- logger's own CI already builds with a live instanceInfo() so it self-heals.
+-- A changed instance busts the F-frame durable hash, so it costs ONE re-keyframe
+-- per peer per zone change, then collapses back to refs - steady-state efficiency
+-- within an instance is unchanged. No SCHEMA_VERSION bump: the CI shape is
+-- identical (instance field already existed), only WHEN it's repopulated changed,
+-- so existing inspect-cache entries keep working and self-correct at next
+-- broadcast. No transport/codec changes; 0.60.0 wire format unchanged.
+-- 0.60.5 (logger spec-change capture): the logger's OWN mid-session spec / hero-
+-- build / mystic-enchant swap is now captured on Bronzebeard by registering the
+-- native C_CharacterAdvancement change events (Epoch-safe via TryRegisterEvent;
+-- those APIs are absent there). Previously only peers' spec changes were picked
+-- up (via the re-inspect cadence); the logger never re-inspects self, so their
+-- own respec went unrecorded mid-raid. No transport/codec changes.
 -- 0.60.4 (own-CI hotfix + guild field): two changes.
 -- (1) Fix the logger's own gear/mystic/talents rendering blank on their own
 -- report - a regression since the 0.60.0 codec overhaul. The own CI is
@@ -98,7 +123,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.4"
+C.VERSION = "0.60.6"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

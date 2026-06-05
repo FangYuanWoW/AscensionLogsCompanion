@@ -138,6 +138,17 @@ local function instanceInfo()
     return out
 end
 
+-- Exposed so the broadcast pipeline can re-stamp a peer's instance from the
+-- logger's LIVE reading at emit time. Instance is a "where is the logger now"
+-- property shared by the whole raid, not a per-peer fact frozen at inspect-build
+-- time. Re-broadcasts (publishPeerInspects / drainDeferQueue) otherwise carry the
+-- instance the logger was in when the peer was last inspected, so a raid that
+-- changes zones keeps emitting the old zone/difficulty until each peer happens to
+-- be re-inspected (see report 10627 / encounter 340057: 20 of 22 CIs stamped
+-- "Molten Core / Ascended" into a Snowgrave / Heroic pull, which sank difficulty
+-- detection to 'normal').
+L.instanceInfo = instanceInfo
+
 function L.buildLocalCI(sessionId)
     local CAO = ALC.Capture.CAOScan
     local Myst = ALC.Capture.MysticEnchantScan

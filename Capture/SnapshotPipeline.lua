@@ -132,6 +132,16 @@ function P.publishPeerInspects()
     local currentBoss   = tracker and tracker.getCurrentBoss() or nil
     local currentPullId = tracker and tracker.getCurrentPullId() or 0
 
+    -- Live instance at broadcast time. The whole raid shares the logger's
+    -- instance, so this reading is authoritative for every peer being emitted,
+    -- and by broadcast time the client has long settled past the zone-in window
+    -- where GetInstanceInfo can lag. Re-stamping here (instead of trusting the
+    -- value frozen at inspect-build) fixes peers riding a stale zone/difficulty
+    -- after the raid changes zones. A changed instance busts the F-frame durable
+    -- hash, so it costs one re-keyframe per peer per zone change, then collapses
+    -- back to refs.
+    local liveInstance = ALC.Capture.LocalScan.instanceInfo()
+
     local count = 0
     for guid, entry in pairs(cache) do
         if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
@@ -148,6 +158,7 @@ function P.publishPeerInspects()
                     entry.ci.captured_for_boss    = currentBoss
                     entry.ci.captured_for_pull_id = currentPullId
                 end
+                if liveInstance then entry.ci.instance = liveInstance end
                 local chunks = serializeCIToChunks(entry.ci)
                 if chunks then
                     for _, chunk in ipairs(chunks) do
@@ -219,6 +230,13 @@ function P.publishPeerInspectsDeferred()
     local currentBoss   = tracker and tracker.getCurrentBoss() or nil
     local currentPullId = tracker and tracker.getCurrentPullId() or 0
 
+    -- Live instance, captured once at enqueue (combat start, well past the
+    -- zone-in settle window) and threaded onto each item exactly like boss/pull.
+    -- Applied at drain so re-broadcast peers carry the logger's current zone /
+    -- difficulty instead of the value frozen at their inspect. See
+    -- publishPeerInspects for the full rationale.
+    local liveInstance = ALC.Capture.LocalScan.instanceInfo()
+
     local queued = 0
     for guid, entry in pairs(cache) do
         if entry.ci and entry.last_success_at and peerCIHasGear(entry.ci) then
@@ -231,6 +249,7 @@ function P.publishPeerInspectsDeferred()
                     entry = entry,
                     currentBoss = currentBoss,
                     currentPullId = currentPullId,
+                    instance = liveInstance,
                 })
                 queued = queued + 1
             end
@@ -256,6 +275,7 @@ local function drainDeferQueue()
                 item.entry.ci.captured_for_boss    = item.currentBoss
                 item.entry.ci.captured_for_pull_id = item.currentPullId
             end
+            if item.instance then item.entry.ci.instance = item.instance end
             local chunks = serializeCIToChunks(item.entry.ci)
             if chunks then
                 for _, chunk in ipairs(chunks) do
