@@ -77,6 +77,9 @@ local function boot()
     -- event-driven and Ascension-only (no-ops on Epoch where C_MythicPlus is
     -- absent), so it's cheap to boot alongside the other capture modules.
     safeStart("KeystoneScan", ALC.Capture.KeystoneScan)
+    -- ManastormScan arms the Manastorm level-clear event (CoA only; no-ops where
+    -- C_Manastorm is absent). One success record per MANASTORM_LEVEL_COMPLETED.
+    safeStart("ManastormScan", ALC.Capture.ManastormScan)
     safeStart("MinimapButton", ALC.UI.MinimapButton)
 
     ALC.Core.Logger.info("|cff00ff00Ascension Logs Companion|r v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/alc|r for settings.")

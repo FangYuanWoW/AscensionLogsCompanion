@@ -146,6 +146,16 @@ local function zoneIsMonitored(name)
     return false
 end
 
+-- CoA Manastorm awareness. Inside a Manastorm the per-level instance name is the
+-- recycled boss's HOME dungeon (RFK / Scarlet Monastery / Deadmines / ...), so it
+-- thrashes across level transitions and may not be in monitored_zones at all -
+-- the normal name match misses the run. Returns false off CoA (C_Manastorm
+-- absent -> ManastormScan.isInManastorm() is false), so this is inert elsewhere.
+local function inManastorm()
+    local MS = ALC.Capture.ManastormScan
+    return (MS and MS.isInManastorm and MS.isInManastorm()) or false
+end
+
 local function startLogging(zoneName, showPopup)
     if LoggingCombat() then
         -- Someone else already started it (or user kept it on across zones).
@@ -167,7 +177,7 @@ local function startLogging(zoneName, showPopup)
     -- World-boss subzones aren't instanced (IsInInstance returns "none")
     -- so they continue to trigger as long as the zone is in the list.
     local _, instanceType = IsInInstance()
-    if instanceType == "party" and not ALC_Config.log_dungeons then
+    if instanceType == "party" and not ALC_Config.log_dungeons and not inManastorm() then
         ALC.Core.Logger.debug("Skipping auto-/combatlog: " .. zoneName .. " is a 5-man and 'Log dungeons' is off")
         return
     end
@@ -228,7 +238,11 @@ end
 
 function Z.check(isMainZoneChange)
     local zone = currentZone()
-    local monitored = zoneIsMonitored(zone)
+    -- Collapse a Manastorm to one stable monitored zone so we prompt once on
+    -- entry and never fire the "left monitored zone" stop prompt as you warp
+    -- between levels (each level reports its boss's home-dungeon name).
+    if inManastorm() then zone = "The Manastorm" end
+    local monitored = zoneIsMonitored(zone) or inManastorm()
     local silent = _G.ALC_Config and ALC_Config.silent_auto_logging
 
     if monitored and Z.lastLoggedZone ~= zone then
@@ -264,4 +278,12 @@ function Z.start()
     -- intentionally not registered (see file header for rationale).
     ALC.RegisterEvent("ZONE_CHANGED_NEW_AREA", function() Z.check(true) end)
     ALC.RegisterEvent("PLAYER_ENTERING_WORLD", function() Z.check(true) end)
+
+    -- CoA Manastorm entry: the scenario teleport may not raise a clean
+    -- ZONE_CHANGED_NEW_AREA we recognize, so also drive the check off the
+    -- Manastorm signals (entry + each level transition). Z.check is idempotent
+    -- (lastLoggedZone collapses to "The Manastorm") so repeats don't re-prompt.
+    -- TryRegisterEvent: these events are absent off CoA, so this is inert there.
+    ALC.TryRegisterEvent("ENTER_MANASTORM_RESULT",  function() Z.check(true) end)
+    ALC.TryRegisterEvent("ACTIVE_MANASTORM_UPDATED", function() Z.check(true) end)
 end

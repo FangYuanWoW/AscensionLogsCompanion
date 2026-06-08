@@ -140,6 +140,21 @@ function H.clearQueue()
     H.pendingSource = nil
 end
 
+-- Ring-only clear: wipe the normal CI/PP/TS ring (e.g. stale pre-combat frames
+-- at pull-start) WITHOUT touching the priority lane. Priority entries (KS/MS
+-- lifecycle records) are point-in-time events that must survive across pulls:
+-- a Manastorm fires one pull per level, so a full clearQueue() at each pull-start
+-- would wipe a level_cleared chunk before it can ride an organic failed cast.
+function H.clearRing()
+    if H.queue then ALC.Core.Queue.ringClear(H.queue) end
+    -- Only drop the in-flight pending chunk if it belongs to the ring; a
+    -- priority chunk mid-application must keep being re-applied.
+    if H.pendingSource == "ring" then
+        H.pendingChunk = nil
+        H.pendingSource = nil
+    end
+end
+
 -- Priority enqueue (0.51.x): chunk jumps ahead of the normal ring. Used for
 -- the keystone outcome so it isn't stuck behind a full encounter's CI/TS
 -- backlog when the player is about to leave the instance.

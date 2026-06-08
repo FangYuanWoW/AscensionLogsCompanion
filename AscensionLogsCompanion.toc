@@ -2,7 +2,7 @@
 ## Title: |cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r
 ## Notes: Inspects gear, talents, and mystic enchants per encounter for ascensionlogs.gg. Auto-inspects the raid in the background.
 ## Author: FangYuanWoW
-## Version: 0.60.6
+## Version: 0.61.1
 ## SavedVariables: ALC_Config, ALC_Peers
 ## SavedVariablesPerCharacter: ALC_LocalState, ALC_InspectCache, ALC_InspectCacheMeta
 ## OptionalDeps: Ace3
@@ -36,6 +36,7 @@ Capture\PetPipeline.lua
 Capture\PetTracker.lua
 Capture\Telemetry.lua
 Capture\KeystoneScan.lua
+Capture\ManastormScan.lua
 
 Transport\AddonChannel.lua
 Transport\SpellFailedRelay.lua

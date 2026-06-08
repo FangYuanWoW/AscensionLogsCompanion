@@ -135,6 +135,24 @@ local function instanceInfo()
             }
         end
     end
+
+    -- Thin Manastorm marker (CoA only): lets the backend tell a report IS a
+    -- Manastorm run, and know the current level, even if every MS chunk is lost.
+    -- The authoritative per-level success rides the separate MS chunk family
+    -- (Capture/ManastormScan.lua); this is just current state. Returns nil when
+    -- C_Manastorm is absent (Bronzebeard/Epoch) or not inside a run.
+    local MS = ALC.Capture.ManastormScan
+    if MS and MS.readActiveManastorm then
+        local ms = MS.readActiveManastorm()
+        if ms then
+            out.manastorm = {
+                is_active    = true,
+                level        = ms.level,
+                manastorm_id = ms.manastorm_id,
+                type         = ms.manastorm_type,
+            }
+        end
+    end
     return out
 end
 

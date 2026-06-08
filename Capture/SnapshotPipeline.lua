@@ -449,9 +449,16 @@ function P.start()
         -- frames instead of one. publishOwnIfChanged still runs synchronously
         -- (one peer, cheap, hash-deduped); peer compression is the cost
         -- that needs spreading.
-        if ALC.Transport.SpellFailedRelay
-           and ALC.Transport.SpellFailedRelay.clearQueue then
-            ALC.Transport.SpellFailedRelay.clearQueue()
+        -- Ring-only: clears stale pre-combat CI/peer frames but PRESERVES the
+        -- priority lane (KS/MS lifecycle records). A full clearQueue() here was
+        -- wiping a Manastorm level_cleared chunk on the next level's pull-start
+        -- before it could ride a failed cast. Fall back to clearQueue on older
+        -- relay builds without clearRing.
+        local relay = ALC.Transport.SpellFailedRelay
+        if relay and relay.clearRing then
+            relay.clearRing()
+        elseif relay and relay.clearQueue then
+            relay.clearQueue()
         end
         P.lastPeerEnqueued = {}
 

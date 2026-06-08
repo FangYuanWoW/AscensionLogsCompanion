@@ -125,6 +125,13 @@ SlashCmdList["ALC"] = function(msg)
             L.warn("KeystoneScan module not loaded.")
         end
 
+    elseif cmd == "manastorm" or cmd == "ms" then
+        if ALC.Capture.ManastormScan and ALC.Capture.ManastormScan.probe then
+            ALC.Capture.ManastormScan.probe(L.info)
+        else
+            L.warn("ManastormScan module not loaded.")
+        end
+
     elseif cmd == "debug" then
         _G.ALC_Config = _G.ALC_Config or {}
         ALC_Config.debug = not ALC_Config.debug

@@ -123,7 +123,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.60.6"
+C.VERSION = "0.61.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -215,6 +215,21 @@ C.KS_SCHEMA_VERSION   = 1
 -- fail-cast was prototyped to guarantee a landing but removed: it requires
 -- protected-function calls that taint from insecure code.)
 C.KS_KEEPALIVE_S = 45    -- relay stays active this long after MYTHIC_PLUS_COMPLETE
+
+-- Manastorm (MS) family: CoA-only scaling scenario. One "level_cleared" record
+-- per MANASTORM_LEVEL_COMPLETED (arg1 = level number). Body shape:
+--   { schema_version=1, addon_version, stream="manastorm", event_type="level_cleared",
+--     session_id, event_id, captured_at, captured_by_guid, server,
+--     manastorm={ level, level_live, manastorm_id, manastorm_type, max_completed,
+--                 boss_name, boss_encounter_id, success=true } }
+-- Format: [[ALC_MS_v1_<sessionId>_<eventId>_<seq>/<total>]]<b64>
+-- CoA-only: C_Manastorm is absent on Bronzebeard/Epoch, so the module no-ops there.
+-- The level-clear fires mid-run (player still inside), so an organic failed cast
+-- carries the priority chunk almost immediately; MS_KEEPALIVE_S covers the brief
+-- between-levels lull. Local experiment as of 0.61.0: not yet consumed server-side.
+C.MS_SENTINEL_PREFIX  = "[[ALC_MS_v1_"
+C.MS_SCHEMA_VERSION   = 1
+C.MS_KEEPALIVE_S      = 30    -- relay stays active this long after a level clear
 
 -- Inspect timings
 C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebeard via /alcprobe throttle-blast 1.0: 24/24 fires got replies, 0% server-throttled. 25-man cold cycle: 48s → 24s. Legacy fallback when ALC.Profile is unset.
@@ -422,6 +437,9 @@ C.DEFAULT_CONFIG = {
     keystone_enabled     = true,  -- 0.51.x local experiment: KS chunk emission for Mythic+ keystone start/complete lifecycle events (Ascension only; no-op on Epoch). Not yet consumed server-side.
     keystone_keepalive   = true,  -- 0.51.x: on key complete, keep the relay active for KS_KEEPALIVE_S out of combat so an organic failed cast flushes the priority outcome chunk. Set false to drain only while in combat.
     keystone_toast       = true,  -- 0.51.x: show an on-screen toast when the key-outcome chunk is confirmed landed in the combat log.
+    manastorm_enabled    = true,  -- 0.61.0 local experiment: MS chunk emission, one level_cleared record per MANASTORM_LEVEL_COMPLETED (CoA only; no-op where C_Manastorm absent). Not yet consumed server-side.
+    manastorm_keepalive  = true,  -- 0.61.0: keep the relay active for MS_KEEPALIVE_S after a level clear so an organic failed cast flushes the priority chunk through the between-levels lull.
+    manastorm_toast      = true,  -- 0.61.0: show an on-screen toast when a level-cleared chunk is confirmed landed in the combat log.
     -- 0.53.0 (NEW-ONLY, local/dev): CI/PP/TS ride [[ALC_F_v1_c2_...]] dict-deflated
     -- frames exclusively; there is no per-family legacy emit path anymore. This
     -- defaults ON and there is no /alc toggle. Editing this in SavedVariables to
