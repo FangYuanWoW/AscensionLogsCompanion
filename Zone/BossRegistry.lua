@@ -199,6 +199,16 @@ B.BY_ZONE["Scholomance"] = {
     "Doctor Theolen Krastinov",
     "Darkmaster Gandling",
 }
+-- Blackrock Caverns (5-man, BRM). Ascension-custom content, live-logged via ALC.
+-- Seeded in the backend creatures table 2026-06-11; names are the exact combat-log
+-- spelling (verified against BB report 9224). Beauty is the optional pet boss.
+B.BY_ZONE["Blackrock Caverns"] = {
+    "Rom'ogg Bonecrusher",
+    "Corla, Herald of Twilight",
+    "Karsh Steelbender",
+    "Beauty",
+    "Ascendant Lord Obsidius",
+}
 B.BY_ZONE["World Bosses"] = {
     "Atal'zul, the Soulreaver",
     "Azuregos",

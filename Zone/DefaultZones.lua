@@ -64,6 +64,7 @@ D.DEFAULTS = {
     ["Zul'Farrak"]            = true,
     ["Maraudon"]              = true,
     ["Sunken Temple"]         = true,
+    ["Blackrock Caverns"]     = true,
     ["Blackrock Depths"]      = true,
     ["Lower Blackrock Spire"] = true,
     ["Upper Blackrock Spire"] = true,
