@@ -7,6 +7,15 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.62.1 (Triumvirate instance auto-logging): adds the full TBC + WotLK
+-- instance set to DefaultZones so auto-/combatlog fires in Triumvirate raids
+-- and dungeons (Karazhan, The Obsidian Sanctum, Ulduar, ICC, the WotLK/TBC
+-- 5-mans, etc.). Names are the verbatim stock 3.3.5a Map.dbc MapName strings
+-- (= what GetInstanceInfo() returns), extracted from the Triumvirate client -
+-- NOT the backend roster strings, which carry "The"-prefix/wing-split drift.
+-- Includes the stock-name variants for a few vanilla 5-mans (Deadmines,
+-- Stormwind Stockade, Blackrock Spire). Purely additive to the shared zone
+-- list; inert for Ascension/Epoch (their clients don't return these names).
 -- 0.62.0 (Triumvirate server support): adds a third detected server profile,
 -- "triumvirate" (stock WotLK 3.3.5a private server, realm "Triumvirate"). It is
 -- an Epoch-family client - same standard talent-group (dual-spec) reader, and
@@ -134,7 +143,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.62.0"
+C.VERSION = "0.62.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

@@ -71,4 +71,75 @@ D.DEFAULTS = {
     ["Dire Maul"]             = true,
     ["Stratholme"]            = true,
     ["Scholomance"]           = true,
+
+    -- ── Triumvirate (stock WotLK 3.3.5a) ─────────────────────────────────
+    -- Verbatim Map.dbc MapName_lang (enUS) strings = exactly what
+    -- GetInstanceInfo() returns on a stock 3.3.5a client (extracted from the
+    -- Triumvirate client 2026-06-15, base archives, no patch-4 edits). A few
+    -- are vanilla instances whose stock map name differs from the
+    -- Ascension-client entries above (e.g. stock "Deadmines" vs "The
+    -- Deadmines", single-map "Blackrock Spire" vs the L/U split) - both forms
+    -- coexist harmlessly. NOTE: the TBC raids below are stock client maps but
+    -- are not yet in the Triumvirate backend content seed, so kills there
+    -- won't classify until the bosses are seeded.
+
+    -- Raids (TBC + WotLK; launch = Karazhan + The Obsidian Sanctum)
+    ["Karazhan"]                              = true,
+    ["Ahn'Qiraj Temple"]                      = true,
+    ["Gruul's Lair"]                          = true,
+    ["Magtheridon's Lair"]                    = true,
+    ["Coilfang: Serpentshrine Cavern"]        = true,
+    ["Tempest Keep"]                          = true,
+    ["The Battle for Mount Hyjal"]            = true,
+    ["Black Temple"]                          = true,
+    ["Zul'Aman"]                              = true,
+    ["The Sunwell"]                           = true,
+    ["Ulduar"]                                = true,
+    ["The Obsidian Sanctum"]                  = true,
+    ["The Eye of Eternity"]                   = true,
+    ["Vault of Archavon"]                     = true,
+    ["Trial of the Crusader"]                 = true,
+    ["Icecrown Citadel"]                      = true,
+    ["The Ruby Sanctum"]                      = true,
+
+    -- Vanilla 5-man stock-name variants (GetInstanceInfo differs from above)
+    ["Deadmines"]                             = true,
+    ["Stormwind Stockade"]                    = true,
+    ["Blackrock Spire"]                       = true,
+
+    -- TBC 5-mans
+    ["Hellfire Citadel: Ramparts"]            = true,
+    ["Hellfire Citadel: The Blood Furnace"]   = true,
+    ["Hellfire Citadel: The Shattered Halls"] = true,
+    ["Coilfang: The Slave Pens"]              = true,
+    ["Coilfang: The Underbog"]                = true,
+    ["Coilfang: The Steamvault"]              = true,
+    ["Auchindoun: Mana-Tombs"]                = true,
+    ["Auchindoun: Auchenai Crypts"]           = true,
+    ["Auchindoun: Sethekk Halls"]             = true,
+    ["Auchindoun: Shadow Labyrinth"]          = true,
+    ["Tempest Keep: The Mechanar"]            = true,
+    ["Tempest Keep: The Botanica"]            = true,
+    ["Tempest Keep: The Arcatraz"]            = true,
+    ["The Escape From Durnholde"]             = true,
+    ["Opening of the Dark Portal"]            = true,
+    ["Magister's Terrace"]                    = true,
+
+    -- WotLK 5-mans
+    ["Utgarde Keep"]                          = true,
+    ["Utgarde Pinnacle"]                      = true,
+    ["The Nexus"]                             = true,
+    ["The Oculus"]                            = true,
+    ["Azjol-Nerub"]                           = true,
+    ["Ahn'kahet: The Old Kingdom"]            = true,
+    ["Drak'Tharon Keep"]                      = true,
+    ["Gundrak"]                               = true,
+    ["Halls of Stone"]                        = true,
+    ["Halls of Lightning"]                    = true,
+    ["Violet Hold"]                           = true,
+    ["The Culling of Stratholme"]             = true,
+    ["Trial of the Champion"]                 = true,
+    ["The Forge of Souls"]                    = true,
+    ["Pit of Saron"]                          = true,
+    ["Halls of Reflection"]                   = true,
 }
