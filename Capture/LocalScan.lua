@@ -174,7 +174,10 @@ function L.buildLocalCI(sessionId)
     local C = ALC.Core.Constants
 
     local profile = ALC.Profile or "ascension"
-    local isAscension = (profile ~= "epoch")
+    -- Epoch-family (Epoch + Triumvirate) shares the vanilla dual-spec talent
+    -- path and lacks the Ascension CAO/mystic API surface; everything else
+    -- (including "unknown") takes the Ascension enrichment branch as before.
+    local isAscension = not ALC.Core.Profile.isEpochFamily()
 
     -- Ascension-only enrichment. On Epoch the underlying APIs are absent so
     -- these calls return nil/empty, but doing them explicitly conditional
@@ -228,9 +231,10 @@ function L.buildLocalCI(sessionId)
             preset_capacity = Myst.readPresetCapacity(),
             tab_unlocked = Myst.hasUnlockedTab(),
         }
-    elseif profile == "epoch" and ALC.Capture.EpochTalentScan then
-        -- Epoch enrichment: rich vanilla 3-tab talent shape mirroring the
-        -- inspect-side payload. Backend dispatches by ci.server.
+    elseif ALC.Core.Profile.isEpochFamily() and ALC.Capture.EpochTalentScan then
+        -- Epoch-family enrichment (Epoch + Triumvirate): rich dual-spec talent
+        -- shape mirroring the inspect-side payload. Backend dispatches by
+        -- ci.server.
         ci.talents = ALC.Capture.EpochTalentScan.readInspectedTalents("player")
     end
 

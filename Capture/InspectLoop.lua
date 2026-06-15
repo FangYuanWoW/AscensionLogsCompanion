@@ -89,9 +89,10 @@ end
 -- On Epoch, C_Appearance doesn't exist AND there's no transmog system at all
 -- (verified 2026-04-28 via probe: zero divergence across all slots, no
 -- C_VanityCollection / C_Wardrobe / C_Transmog / EpochTransmog globals). So
--- we short-circuit to false on the epoch profile to skip all vanity work.
+-- we short-circuit to false on the epoch-family profiles (Epoch + Triumvirate,
+-- both stock vanilla/WotLK with no transmog system) to skip all vanity work.
 local function transmogVisible()
-    if ALC.Profile == "epoch" then return false end
+    if ALC.Core.Profile.isEpochFamily() then return false end
     if type(_G.C_Appearance) ~= "table"
        or type(C_Appearance.CanSeeAppearances) ~= "function" then
         return true  -- API absent; assume worst case (transmog visible)
@@ -359,9 +360,9 @@ local function finalizeInspect()
             end
         end
         -- Ascension-only enrichment: mystic enchants + CAO talent state.
-        -- Both APIs are absent on Epoch (probe-confirmed), and the inspect
-        -- result events for them never fire there.
-        if ALC.Profile ~= "epoch" then
+        -- Both APIs are absent on the epoch-family profiles (probe-confirmed),
+        -- and the inspect result events for them never fire there.
+        if not ALC.Core.Profile.isEpochFamily() then
             if ALC.Capture.MysticEnchantScan then
                 ci.mystic_enchants = {
                     applied  = ALC.Capture.MysticEnchantScan.readInspectedEnchants(unit),
@@ -390,7 +391,7 @@ local function finalizeInspect()
         -- Backend dispatches by snapshot's `server` field. The shallow
         -- specialization.vanilla_talents (rank-only) stays populated by
         -- LocalScan.buildInspectCI for back-compat with v0.1.x parsers.
-        if ALC.Profile == "epoch" then
+        if ALC.Core.Profile.isEpochFamily() then
             ci.talents = infl.talentSnapshot
         end
 
@@ -440,7 +441,7 @@ local function finalizeInspect()
         -- check missingTalents, since onInspectReady leaves talentSnapshot
         -- nil whenever the global-inspect-buffer race was detected.
         local missingCAO, missingMystic, missingTalents = false, false, false
-        if ALC.Profile == "epoch" then
+        if ALC.Core.Profile.isEpochFamily() then
             missingTalents = (ci and ci.talents == nil) and true or false
         else
             missingCAO    = (ci and ci.specialization
@@ -567,7 +568,7 @@ local function tryFinalize()
     if not infl or infl.finalized then return end
     if not infl.gotTalent then return end  -- need stock inspect first
 
-    if ALC.Profile == "epoch" then
+    if ALC.Core.Profile.isEpochFamily() then
         finalizeInspect()
         return
     end
@@ -599,7 +600,8 @@ local function onInspectReady()
     if not infl then return end
     local sessionId = _G.ALC_LocalState and _G.ALC_LocalState.session_id
 
-    -- EPOCH ONLY: snapshot talents synchronously NOW, while WoW's global
+    -- EPOCH-FAMILY ONLY (Epoch + Triumvirate): snapshot talents synchronously
+    -- NOW, while WoW's global
     -- inspect buffer is freshest (this event just fired). The +400ms gear
     -- flip delay below leaves a window in which any other NotifyInspect
     -- (peer addon, raid frame mouseover, user right-click inspect) would
@@ -614,7 +616,7 @@ local function onInspectReady()
     --
     -- BB profile is unaffected: it uses C_CharacterAdvancement.InspectUnit,
     -- which is per-unit-keyed in the client and not subject to this race.
-    if ALC.Profile == "epoch"
+    if ALC.Core.Profile.isEpochFamily()
        and ALC.Capture.EpochTalentScan
        and not infl.talentSnapshot then
         local readUnit = resolveUnit(infl.guid)
@@ -745,7 +747,7 @@ local function tick()
     -- still didn't reliably surface divergence. Plain NotifyInspect is
     -- enough for the lighter fields.
     NotifyInspect(unit)
-    if ALC.Profile ~= "epoch" then
+    if not ALC.Core.Profile.isEpochFamily() then
         -- Ascension-specific: trigger CAO inspect packet
         if _G.C_CharacterAdvancement and type(_G.C_CharacterAdvancement.InspectUnit) == "function" then
             pcall(_G.C_CharacterAdvancement.InspectUnit, unit)
@@ -850,7 +852,7 @@ function I.start()
     rebuildUnitIndex()
 
     ALC.RegisterEvent("INSPECT_TALENT_READY", onInspectReady)
-    if ALC.Profile ~= "epoch" then
+    if not ALC.Core.Profile.isEpochFamily() then
         -- Ascension-specific inspect-result events. We treat any payload as
         -- "ack received" and finalize as soon as both have fired (or 3s
         -- after INSPECT_TALENT_READY, whichever comes first). The /alcv3

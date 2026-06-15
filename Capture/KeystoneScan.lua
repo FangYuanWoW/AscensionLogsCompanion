@@ -16,10 +16,11 @@
 --   landed-evidence + UIErrorsFrame suppression inherit for free; no relay
 --   changes needed).
 --
--- Ascension-only: the whole C_MythicPlus namespace is absent on Epoch and
--- vanilla, so isAvailable() short-circuits and the module is inert there. No
--- serverType gate beyond the API-presence check is needed (the API IS the
--- gate), but we also bail when ALC.Profile == "epoch" for clarity.
+-- Ascension-only: the whole C_MythicPlus namespace is absent on the epoch-
+-- family profiles (Epoch + Triumvirate) and vanilla, so isAvailable() short-
+-- circuits and the module is inert there. No serverType gate beyond the
+-- API-presence check is needed (the API IS the gate), but we also bail on the
+-- epoch-family profiles for clarity.
 --
 -- Affixes / dungeonID / level are Ascension INTERNAL ids (huge numbers, not
 -- Blizzard's small ids). Captured raw; the backend resolves names.
@@ -84,7 +85,7 @@ end
 -- Availability + scope gate
 
 local function isAvailable()
-    if ALC.Profile == "epoch" then return false end
+    if ALC.Core.Profile.isEpochFamily() then return false end
     local ns = _G.C_MythicPlus
     return type(ns) == "table" and type(ns.IsKeystoneActive) == "function"
 end

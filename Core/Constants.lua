@@ -7,6 +7,17 @@ local C = {}
 ALC.Core.Constants = C
 
 -- Version
+-- 0.62.0 (Triumvirate server support): adds a third detected server profile,
+-- "triumvirate" (stock WotLK 3.3.5a private server, realm "Triumvirate"). It is
+-- an Epoch-family client - same standard talent-group (dual-spec) reader, and
+-- none of Ascension's CAO / MysticEnchant / transmog / Mythic+ API surface - so
+-- every capture-side branch now gates on Core.Profile.isEpochFamily() (Epoch OR
+-- Triumvirate) instead of a bare == "epoch". The ONLY divergence from Epoch is
+-- the `server` tag the snapshot stamps ("triumvirate"), for backend tenant
+-- routing. Inert for Ascension and Epoch users: their detected profile and
+-- every branch outcome are unchanged. No SCHEMA_VERSION bump - the Triumvirate
+-- CI reuses Epoch's existing talent_groups shape (schema 5). Realm string
+-- confirmed 2026-06-15 via clean in-game probe.
 -- 0.60.6 (peer-instance freshness): re-stamp a peer CI's instance from the
 -- logger's LIVE GetInstanceInfo at broadcast time, instead of carrying the value
 -- frozen when that peer was last inspected. Instance (zone + difficulty) is a
@@ -123,7 +134,7 @@ ALC.Core.Constants = C
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.61.2"
+C.VERSION = "0.62.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -240,8 +251,14 @@ C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebea
 -- so 0.5s leaves comfortable margin and roughly halves cold-cycle time vs
 -- Ascension's 1.0s floor.
 C.INSPECT_MIN_INTERVAL_S_BY_PROFILE = {
-    ascension = 1.0,
-    epoch     = 0.5,
+    ascension   = 1.0,
+    epoch       = 0.5,
+    -- Triumvirate inherits Epoch's 0.5s floor: same 3.3.5 engine family, and
+    -- Epoch (also a private 3.3.5 server) replied 24/24 at 0.30s, so 0.5s
+    -- carries comfortable margin. NOT yet throttle-blast-validated on
+    -- Triumvirate specifically; drop to 1.0 (the legacy floor) if launch logs
+    -- show server-throttled inspect misses.
+    triumvirate = 0.5,
 }
 C.INSPECT_TIMEOUT_S      = 5.0
 C.INSPECT_RESCAN_MS      = 300000  -- 5 min (used when boss tracking pins a current boss)
