@@ -36,6 +36,15 @@ local REALMS = {
     ["Bronzebeard - Warcraft Reborn"] = P.ASCENSION,
     ["Bronzebeard"]                   = P.ASCENSION,
     ["Warcraft Reborn"]               = P.ASCENSION,
+    -- Conquest of Azeroth (Ascension family; public launch 2026-07-03 with
+    -- two realms). The exact GetRealmName() string is unverified on the live
+    -- realms (the beta probe environment was Vol'jin), so both the bare and
+    -- launcher-style suffixed forms are listed. Belt-and-suspenders only:
+    -- the Ascension-globals probe below also resolves CoA clients.
+    ["Vol'jin"]                       = P.ASCENSION,
+    ["Rexxar"]                        = P.ASCENSION,
+    ["Vol'jin - Conquest of Azeroth"] = P.ASCENSION,
+    ["Rexxar - Conquest of Azeroth"]  = P.ASCENSION,
     ["Kezan"]                         = P.EPOCH,
     ["Gurubashi"]                     = P.EPOCH,
     -- Triumvirate: stock WotLK 3.3.5a private server (triumvirate-wow.com).

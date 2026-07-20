@@ -21,6 +21,7 @@ Core\Frame.lua
 Core\Hash.lua
 Core\Metrics.lua
 Core\Profile.lua
+Core\Branding.lua
 
 Capture\LocalScan.lua
 Capture\MysticEnchantScan.lua

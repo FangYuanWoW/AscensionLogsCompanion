@@ -30,7 +30,8 @@ local VC_SCHEMA_VERSION = 1
 -- Note: BATTLEGROUND deliberately omitted. Many private-server cores (incl.
 -- some Ascension/Bronzebeard builds) reject it with "Unknown addon chat type"
 -- and throw, killing the handler. RAID still reaches everyone in a BG raid.
-local RELEASES_URL      = "https://github.com/FangYuanWoW/AscensionLogsCompanion/releases"
+-- Releases URL is resolved per-tenant at announce time from Core.Branding; it
+-- can't be read at file-load because ALC.Profile isn't set until Init.boot().
 
 V.localVersion = 0     -- numeric form, e.g. 0.1.6 -> 106
 V.latestSeen   = 0
@@ -282,13 +283,14 @@ function V.maybeAnnounce()
     if V.displayed then return end
     if V.latestSeen <= V.localVersion then return end
     V.displayed = true
-    local localStr  = intToVersion(V.localVersion)
-    local remoteStr = intToVersion(V.latestSeen)
+    local localStr   = intToVersion(V.localVersion)
+    local remoteStr  = intToVersion(V.latestSeen)
+    local RELEASES_URL = ALC.Core.Branding.releasesUrl()
     -- 3.3.5 chat ignores |cff color outside |H hyperlinks (forces a fixed
     -- link color), so the URL is shown as plain white text on its own line
     -- for readability, with a separate yellow clickable on the third line.
     DEFAULT_CHAT_FRAME:AddMessage(
-        "|cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r: |cffffd200new version v"
+        ALC.Core.Branding.titleRich() .. ": |cffffd200new version v"
         .. remoteStr .. "|r available (you have v" .. localStr .. ")."
     )
     DEFAULT_CHAT_FRAME:AddMessage("|cffffffff" .. RELEASES_URL .. "|r")

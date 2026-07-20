@@ -32,6 +32,17 @@ local function boot()
     -- "ascension" | "epoch" | "unknown" and caches to ALC_Config.
     ALC.Core.Profile.detect()
 
+    -- Register the brand-specific slash alias now that the profile is known
+    -- (e.g. /tlc on Triumvirate). Slash tokens registered at file-load can't be
+    -- brand-aware because Profile isn't set yet; /alc stays a universal alias.
+    local brandSlash = ALC.Core.Branding.slash()
+    if brandSlash and brandSlash ~= "alc" then
+        _G.SLASH_ALC3 = "/" .. brandSlash
+    end
+
+    -- Re-tag chat lines for the active brand (e.g. [TLC] on Triumvirate).
+    ALC.Core.Logger.applyBrand()
+
     -- Per-character state
     ALC.Parser.Session.init()
 
@@ -82,7 +93,7 @@ local function boot()
     safeStart("ManastormScan", ALC.Capture.ManastormScan)
     safeStart("MinimapButton", ALC.UI.MinimapButton)
 
-    ALC.Core.Logger.info("|cff00ff00Ascension Logs Companion|r v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/alc|r for settings.")
+    ALC.Core.Logger.info(ALC.Core.Branding.titleGreen() .. " v" .. ALC.Core.Constants.VERSION .. " loaded.  |cffffd200/" .. ALC.Core.Branding.slash() .. "|r for settings.")
 
     -- First-boot sanity probe
     if ALC_Config.debug then
@@ -100,7 +111,7 @@ bootFrame:RegisterEvent("ADDON_LOADED")
 bootFrame:RegisterEvent("PLAYER_LOGIN")
 bootFrame:RegisterEvent("PLAYER_LOGOUT")
 bootFrame:SetScript("OnEvent", function(self, event, arg1)
-    if event == "ADDON_LOADED" and arg1 == "AscensionLogsCompanion" then
+    if event == "ADDON_LOADED" and arg1 == ALC.Core.Constants.ADDON_FOLDER then
         boot()
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "PLAYER_LOGIN" then

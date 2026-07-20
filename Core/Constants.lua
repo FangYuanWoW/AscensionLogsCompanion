@@ -6,6 +6,18 @@ local ALC = _G.ALC
 local C = {}
 ALC.Core.Constants = C
 
+-- Addon folder identity, derived at runtime from the file vararg. The .toc
+-- loader passes the addon's folder name as the first vararg to every Lua file
+-- it loads, so deriving it here (instead of hardcoding "AscensionLogsCompanion")
+-- lets a rebranded build keep working without touching code: a per-tenant
+-- packaging step can rename the folder (e.g. to TriumvirateLogsCompanion) and
+-- the ADDON_LOADED boot gate, every Media\ texture path, the LibDBIcon registry
+-- name, and the WoW taint-message string match (WoW builds that message from the
+-- folder name) all follow the real folder name automatically.
+local ADDON_NAME = ...
+C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
+C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
+
 -- Version
 -- 0.62.1 (Triumvirate instance auto-logging): adds the full TBC + WotLK
 -- instance set to DefaultZones so auto-/combatlog fires in Triumvirate raids

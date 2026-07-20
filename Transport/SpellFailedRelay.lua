@@ -349,7 +349,7 @@ end
 local function buildFilteredHandler(inner)
     return function(msg)
         if type(msg) == "string"
-           and msg:find("AscensionLogsCompanion", 1, true)
+           and msg:find(ALC.Core.Constants.ADDON_FOLDER, 1, true)
            and msg:find("tainted the call", 1, true) then
             ALC.Core.Metrics.inc("taint_errors_suppressed")
             return
@@ -400,10 +400,10 @@ end
 -- The rendered text always contains the addon name regardless of which
 -- slot the caller used, so match against that as well.
 local function alcMatchesPopup(self, data)
-    if data == "AscensionLogsCompanion" then return true end
+    if data == ALC.Core.Constants.ADDON_FOLDER then return true end
     if self and self.text and self.text.GetText then
         local txt = self.text:GetText()
-        if txt and txt:find("AscensionLogsCompanion", 1, true) then
+        if txt and txt:find(ALC.Core.Constants.ADDON_FOLDER, 1, true) then
             return true
         end
     end
@@ -451,7 +451,7 @@ local function installTaintPopupSuppressor()
     if not H._taintPopupShowHooked and type(_G.StaticPopup_Show) == "function" then
         hooksecurefunc("StaticPopup_Show", function(which, text_arg1)
             if (which == "ADDON_ACTION_FORBIDDEN" or which == "ADDON_ACTION_BLOCKED")
-               and text_arg1 == "AscensionLogsCompanion" then
+               and text_arg1 == ALC.Core.Constants.ADDON_FOLDER then
                 StaticPopup_Hide(which)
             end
         end)

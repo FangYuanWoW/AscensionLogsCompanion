@@ -167,13 +167,13 @@ function UI.create()
 
     -- ---------- Header ----------
     local logo = f:CreateTexture(nil, "OVERLAY")
-    logo:SetTexture("Interface\\AddOns\\AscensionLogsCompanion\\Media\\logo-128.tga")
+    logo:SetTexture(ALC.Core.Constants.MEDIA_PATH .. "logo-128.tga")
     logo:SetSize(48, 48)
     logo:SetPoint("TOPLEFT", f, "TOPLEFT", 18, -14)
 
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("LEFT", logo, "RIGHT", 10, 6)
-    title:SetText("|cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r")
+    title:SetText(ALC.Core.Branding.titleRich())
 
     local subtitle = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
@@ -446,7 +446,7 @@ function UI.create()
     -- ---------- Footer ----------
     local status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     status:SetPoint("BOTTOM", f, "BOTTOM", 0, 14)
-    status:SetText("|cffaaaaaaType|r /alc status |cffaaaaaain chat for inspect counts and combatant info delivery stats|r")
+    status:SetText("|cffaaaaaaType|r /" .. ALC.Core.Branding.slash() .. " status |cffaaaaaain chat for inspect counts and combatant info delivery stats|r")
 
     UI.frame = f
     UI.zoneRows = {}

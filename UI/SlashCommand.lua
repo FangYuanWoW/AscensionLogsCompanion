@@ -17,11 +17,12 @@ end
 -- advertised - the settings panel covers everything most people need.
 local function printHelp()
     local L = ALC.Core.Logger
-    L.info("|cff00ff00Ascension Logs Companion|r")
-    L.info("  |cffffd200/alc|r              open panel")
-    L.info("  |cffffd200/alc settings|r     open panel on Settings tab")
-    L.info("  |cffffd200/alc zones|r        open panel on Monitored Zones tab")
-    L.info("  |cffffd200/alc status|r       show current state")
+    local s = "/" .. ALC.Core.Branding.slash()
+    L.info(ALC.Core.Branding.titleGreen())
+    L.info("  |cffffd200" .. s .. "|r              open panel")
+    L.info("  |cffffd200" .. s .. " settings|r     open panel on Settings tab")
+    L.info("  |cffffd200" .. s .. " zones|r        open panel on Monitored Zones tab")
+    L.info("  |cffffd200" .. s .. " status|r       show current state")
 end
 
 SlashCmdList["ALC"] = function(msg)
@@ -58,7 +59,7 @@ SlashCmdList["ALC"] = function(msg)
         local logging = (LoggingCombat and LoggingCombat()) and "|cff00ff00Yes|r" or "|cffaaaaaaNo|r"
         local autoOn  = cfg.auto_combatlog_on_raid and "|cff00ff00On|r" or "|cffaaaaaaOff|r"
 
-        L.info("|cff00ff00Ascension Logs Companion|r |cff888888v" .. ALC.Core.Constants.VERSION .. "|r")
+        L.info(ALC.Core.Branding.titleGreen() .. " |cff888888v" .. ALC.Core.Constants.VERSION .. "|r")
         L.info("Current zone: |cffe8e8e8" .. zone .. "|r   /combatlog: " .. logging)
         L.info("Auto-log on zone entry: " .. autoOn)
         L.info(" ")

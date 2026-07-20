@@ -205,7 +205,7 @@ local function startLogging(zoneName, showPopup)
         end
 
         local baseText =
-            "|TInterface\\AddOns\\AscensionLogsCompanion\\Media\\logo-128.tga:32:32:0:0|t  |cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r\n" ..
+            "|T" .. ALC.Core.Constants.MEDIA_PATH .. "logo-128.tga:32:32:0:0|t  " .. ALC.Core.Branding.titleRich() .. "\n" ..
             "|cff555555------------------------------|r\n" ..
             "Starting |cffffd200/combatlog|r for:\n" ..
             "|cff00ffff" .. zoneName .. "|r\n\n" ..
@@ -255,7 +255,7 @@ function Z.check(isMainZoneChange)
         -- Silent mode skips this entirely - logging just stays on.
         local leftZone = Z.lastLoggedZone
         StaticPopupDialogs["ALC_COMBATLOG_STOP_PROMPT"].text =
-            "|TInterface\\AddOns\\AscensionLogsCompanion\\Media\\logo-128.tga:32:32:0:0|t  |cff4ec3ffAscension Logs|r |cffe8e8e8Companion|r\n" ..
+            "|T" .. ALC.Core.Constants.MEDIA_PATH .. "logo-128.tga:32:32:0:0|t  " .. ALC.Core.Branding.titleRich() .. "\n" ..
             "|cff555555------------------------------|r\n" ..
             "Left monitored zone:\n" ..
             "|cff00ffff" .. leftZone .. "|r\n\n" ..

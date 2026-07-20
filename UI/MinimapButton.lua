@@ -8,7 +8,7 @@ local ALC = _G.ALC
 local M = {}
 ALC.UI.MinimapButton = M
 
-local LDB_NAME = "AscensionLogsCompanion"
+local LDB_NAME = ALC.Core.Constants.ADDON_FOLDER
 
 -- LibDBIcon expects { hide = bool, minimapPos = number }. Older builds wrote
 -- { hidden = bool, angle = number }; rewrite in place on first load so users
@@ -103,7 +103,7 @@ local function buildTooltip(tt)
     local cache = _G.ALC_InspectCache or {}
     local nCache = 0
     for _ in pairs(cache) do nCache = nCache + 1 end
-    tt:AddLine("|cff00ff00Ascension Logs Companion|r")
+    tt:AddLine(ALC.Core.Branding.titleGreen())
     tt:AddLine("v" .. ALC.Core.Constants.VERSION, 0.7, 0.7, 0.7)
     tt:AddLine(" ")
     tt:AddDoubleLine("/combatlog",
@@ -142,8 +142,8 @@ function M.start()
     local launcher = LDB:GetDataObjectByName(LDB_NAME)
                   or LDB:NewDataObject(LDB_NAME, {
         type = "launcher",
-        text = "Ascension Logs",
-        icon = "Interface\\AddOns\\AscensionLogsCompanion\\Media\\flame-32.tga",
+        text = ALC.Core.Branding.short(),
+        icon = ALC.Core.Constants.MEDIA_PATH .. "flame-32.tga",
         OnClick = function(_, button)
             if ALC.UI.SettingsFrame then ALC.UI.SettingsFrame.toggle() end
         end,
