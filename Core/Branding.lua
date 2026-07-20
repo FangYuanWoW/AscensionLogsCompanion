@@ -33,7 +33,7 @@ local BRANDS = {
         full        = "Triumvirate Logs Companion",
         slash       = "tlc",     -- /alc still works everywhere as a universal alias
         accent      = "4ec3ff",  -- shares the Ascension blue (owner keeps the blue brand color)
-        domain      = "triumviratelogs.gg",
+        domain      = "triumlogs.gg",
         releasesUrl = "https://github.com/FangYuanWoW/triumvirate-logs-companion/releases",
     },
 }
