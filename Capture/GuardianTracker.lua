@@ -14,11 +14,18 @@
 -- 3.3.5-era meters (Skada) use it as well.
 --
 -- Trigger: CLEU source or dest flags carrying TYPE_PET or TYPE_GUARDIAN
--- plus CONTROL_PLAYER plus REACTION_FRIENDLY. Each GUID is scanned exactly
--- once per session (success, failure, or roster miss all mark it seen) -
--- transient guardians spawn with fresh GUIDs, so the once-guard is also the
--- throttle. A scan is one hidden-tooltip render (a few hundredths of a ms);
--- a proc-heavy fight produces a few hundred distinct GUIDs total.
+-- plus CONTROL_PLAYER plus REACTION_FRIENDLY. A successful scan is final;
+-- a failed one is retried on a later CLEU row from the same GUID with
+-- exponential backoff (2s doubling to a 30s cap, 12 attempts max). The
+-- first row a guardian ever logs is usually its spawn instant (raid buffs
+-- blanket it the same millisecond it appears), and a tooltip render at
+-- that moment can miss: the object may not be queryable client-side yet,
+-- or it spawned out of render range. A long-lived guardian keeps logging
+-- rows for the whole fight, so a later attempt lands once the unit is
+-- rendered - the Details port survives the same race by clearing its
+-- failed-scan list every segment. A scan is one hidden-tooltip render (a
+-- few hundredths of a ms); the backoff bounds a never-resolvable GUID
+-- (e.g. a despawned one-proc guardian) to 12 renders total.
 --
 -- Scope notes:
 --   * Slot pets (0xF140 space) get re-resolved here too when they act in
@@ -51,8 +58,14 @@ local TYPE_PET_OR_GUARDIAN = 0x00003000 -- TYPE_PET 0x1000 | TYPE_GUARDIAN 0x200
 local CONTROL_PLAYER       = 0x00000100
 local REACTION_FRIENDLY    = 0x00000010
 
-T.seenGuids = {}   -- [petGuid] = true; session-lifetime scan-once guard
-T.stats = { seen = 0, resolved = 0, failed = 0, no_roster = 0 }
+-- [petGuid] = true once final (resolved, or retries exhausted); a pending
+-- retry holds { attempts, nextAt } instead.
+T.seenGuids = {}
+T.stats = { seen = 0, resolved = 0, failed = 0, no_roster = 0, retries = 0, rescued = 0 }
+
+local RETRY_BASE_DELAY   = 2   -- seconds; doubles per failed attempt
+local RETRY_MAX_DELAY    = 30
+local RETRY_MAX_ATTEMPTS = 12
 
 -- Owner-title patterns ("%s's Pet" -> "(.+)'s Pet"), built from the client's
 -- localized UNITNAME_TITLE_* globals on first use. Guarded per-global: not
@@ -136,23 +149,42 @@ end
 
 local function maybeResolve(guid, flags)
     if not guid or not flags or guid == "" then return end
-    if T.seenGuids[guid] then return end
+    local state = T.seenGuids[guid]
+    if state == true then return end
     if band(flags, TYPE_PET_OR_GUARDIAN) == 0 then return end
     if band(flags, CONTROL_PLAYER) == 0 then return end
     if band(flags, REACTION_FRIENDLY) == 0 then return end
 
-    T.seenGuids[guid] = true
-    T.stats.seen = T.stats.seen + 1
+    local now = GetTime()
+    if state then
+        if now < state.nextAt then return end
+        T.stats.retries = T.stats.retries + 1
+    else
+        T.stats.seen = T.stats.seen + 1
+    end
 
     local ownerGuid, outcome = scanOwnerGuid(guid)
-    T.stats[outcome] = (T.stats[outcome] or 0) + 1
 
     if ownerGuid then
+        T.seenGuids[guid] = true
+        T.stats.resolved = T.stats.resolved + 1
+        if state then T.stats.rescued = T.stats.rescued + 1 end
         local pipeline = ALC.Capture.PetPipeline
         if pipeline and pipeline.publishPairs then
             pipeline.publishPairs({ { owner = ownerGuid, pet = guid } })
         end
+        return
     end
+
+    local attempts = (state and state.attempts or 0) + 1
+    if attempts >= RETRY_MAX_ATTEMPTS then
+        T.seenGuids[guid] = true
+        T.stats[outcome] = (T.stats[outcome] or 0) + 1
+        return
+    end
+    local delay = RETRY_BASE_DELAY * 2 ^ (attempts - 1)
+    if delay > RETRY_MAX_DELAY then delay = RETRY_MAX_DELAY end
+    T.seenGuids[guid] = { attempts = attempts, nextAt = now + delay }
 end
 
 local function onCombatLogEvent(event, ...)
@@ -165,11 +197,14 @@ local function onCombatLogEvent(event, ...)
     maybeResolve(destGUID, destFlags)
 end
 
--- /alc guardians output.
+-- /alc guardians output. failed/no-roster count GUIDs whose retries are
+-- exhausted; rescued = resolved on a retry rather than the first scan.
 function T.probe(printer)
     printer = printer or ALC.Core.Logger.info
     printer("GuardianTracker: seen |cffe8e8e8" .. T.stats.seen .. "|r"
         .. "  resolved |cff00ff00" .. T.stats.resolved .. "|r"
+        .. " (rescued " .. (T.stats.rescued or 0) .. ")"
+        .. "  retries |cffe8e8e8" .. (T.stats.retries or 0) .. "|r"
         .. "  no-roster |cffaaaaaa" .. (T.stats.no_roster or 0) .. "|r"
         .. "  failed |cffff7777" .. T.stats.failed .. "|r")
 end

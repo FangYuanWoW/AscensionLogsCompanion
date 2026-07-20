@@ -19,6 +19,17 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.63.2 (guardian owner-scan retry): GuardianTracker no longer gives up on a
+-- guardian GUID after one failed tooltip scan. The first CLEU row a proc
+-- guardian logs is typically its spawn instant, when a tooltip render by GUID
+-- can miss (object not yet queryable, or out of render range) - and the
+-- scan-once guard then poisoned that GUID for the whole session, so a
+-- fight-long guardian (e.g. a Shieldmaiden shielding the raid for minutes)
+-- never got an owner pair and its output landed on an orphan creature row
+-- server-side. Failed scans now retry on later rows from the same GUID with
+-- exponential backoff (2s doubling to a 30s cap, 12 attempts max); a success
+-- is still final and resolved GUIDs are never re-rendered. No transport/codec
+-- changes; PP wire format unchanged.
 -- 0.62.1 (Triumvirate instance auto-logging): adds the full TBC + WotLK
 -- instance set to DefaultZones so auto-/combatlog fires in Triumvirate raids
 -- and dungeons (Karazhan, The Obsidian Sanctum, Ulduar, ICC, the WotLK/TBC
@@ -155,7 +166,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.63.1"
+C.VERSION = "0.63.2"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
