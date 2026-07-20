@@ -32,6 +32,35 @@ local function boot()
     -- "ascension" | "epoch" | "unknown" and caches to ALC_Config.
     ALC.Core.Profile.detect()
 
+    -- Hot-swap guard: when the addon is updated in place while the game is
+    -- running, /reload re-reads EXISTING files but the client's .toc file
+    -- list is cached from launch, so files ADDED by the update (like
+    -- Core/Branding.lua in 0.63.0) never load. Shim the Ascension defaults
+    -- so the session keeps working, and tell the player a full game restart
+    -- finishes the update. Fresh installs and restarted clients never take
+    -- this path.
+    if not ALC.Core.Branding then
+        local FALLBACK = {
+            short       = "Ascension Logs",
+            full        = "Ascension Logs Companion",
+            slash       = "alc",
+            accent      = "4ec3ff",
+            domain      = "ascensionlogs.gg",
+            releasesUrl = "https://github.com/FangYuanWoW/AscensionLogsCompanion/releases",
+        }
+        local B = {}
+        function B.current()     return FALLBACK end
+        function B.titleGreen()  return "|cff00ff00" .. FALLBACK.full .. "|r" end
+        function B.titleRich()   return "|cff" .. FALLBACK.accent .. FALLBACK.short .. "|r |cffe8e8e8Companion|r" end
+        function B.short()       return FALLBACK.short end
+        function B.full()        return FALLBACK.full end
+        function B.slash()       return FALLBACK.slash end
+        function B.domain()      return FALLBACK.domain end
+        function B.releasesUrl() return FALLBACK.releasesUrl end
+        ALC.Core.Branding = B
+        ALC.Core.Logger.warn("Addon updated while the game was running - fully exit and restart WoW to finish the update (/reload is not enough).")
+    end
+
     -- Register the brand-specific slash alias now that the profile is known
     -- (e.g. /tlc on Triumvirate). Slash tokens registered at file-load can't be
     -- brand-aware because Profile isn't set yet; /alc stays a universal alias.
