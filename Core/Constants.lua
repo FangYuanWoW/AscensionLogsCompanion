@@ -19,6 +19,20 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.63.3 (guardian scan state is per-fight): the server recycles despawned
+-- summons' GUIDs, so a guardian GUID resolved to one owner early in a session
+-- can belong to a DIFFERENT owner's summon on a later boss. GuardianTracker's
+-- session-lifetime resolved cache kept vouching for the stale owner and never
+-- emitted a correcting pair - the server then applied the stale pair
+-- report-wide by exact GUID, silently crediting later bosses' guardians to
+-- the wrong player (a support who swapped off after one fight kept "earning"
+-- Spirit of Life damage on every later boss from other supports' recycled
+-- spirits). seenGuids is now wiped on PLAYER_REGEN_ENABLED so every fight
+-- re-resolves each guardian from scratch and re-publishes its pair - giving
+-- the server per-encounter pairs it can use to scope ownership when a GUID's
+-- owner changes mid-report (server-side scoping ships separately). Details
+-- clears its whole pet cache per segment for the same reason. No
+-- transport/codec changes; PP wire format unchanged.
 -- 0.63.2 (guardian owner-scan retry): GuardianTracker no longer gives up on a
 -- guardian GUID after one failed tooltip scan. The first CLEU row a proc
 -- guardian logs is typically its spawn instant, when a tooltip render by GUID
@@ -166,7 +180,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.63.2"
+C.VERSION = "0.63.3"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

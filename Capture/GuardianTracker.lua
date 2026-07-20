@@ -14,18 +14,29 @@
 -- 3.3.5-era meters (Skada) use it as well.
 --
 -- Trigger: CLEU source or dest flags carrying TYPE_PET or TYPE_GUARDIAN
--- plus CONTROL_PLAYER plus REACTION_FRIENDLY. A successful scan is final;
--- a failed one is retried on a later CLEU row from the same GUID with
--- exponential backoff (2s doubling to a 30s cap, 12 attempts max). The
--- first row a guardian ever logs is usually its spawn instant (raid buffs
--- blanket it the same millisecond it appears), and a tooltip render at
--- that moment can miss: the object may not be queryable client-side yet,
--- or it spawned out of render range. A long-lived guardian keeps logging
--- rows for the whole fight, so a later attempt lands once the unit is
--- rendered - the Details port survives the same race by clearing its
--- failed-scan list every segment. A scan is one hidden-tooltip render (a
--- few hundredths of a ms); the backoff bounds a never-resolvable GUID
--- (e.g. a despawned one-proc guardian) to 12 renders total.
+-- plus CONTROL_PLAYER plus REACTION_FRIENDLY. A successful scan is final
+-- FOR THE CURRENT FIGHT; a failed one is retried on a later CLEU row from
+-- the same GUID with exponential backoff (2s doubling to a 30s cap, 12
+-- attempts max). The first row a guardian ever logs is usually its spawn
+-- instant (raid buffs blanket it the same millisecond it appears), and a
+-- tooltip render at that moment can miss: the object may not be queryable
+-- client-side yet, or it spawned out of render range. A long-lived
+-- guardian keeps logging rows for the whole fight, so a later attempt
+-- lands once the unit is rendered.
+--
+-- ALL scan state - successes included - is wiped when the player leaves
+-- combat (PLAYER_REGEN_ENABLED). The server recycles despawned summons'
+-- GUIDs, so a GUID resolved to one owner earlier in the session can
+-- belong to a DIFFERENT owner's summon a few fights later; a
+-- session-lifetime "resolved" cache would keep vouching for the stale
+-- owner and never emit the correcting pair. Ownership is a per-fight
+-- fact, not a per-session one - the Details port encodes the same rule
+-- by clearing its whole pet cache every segment. Re-resolving a
+-- persistent pet each fight costs one tooltip render (a few hundredths
+-- of a ms) and re-publishes its pair, which is exactly what lets the
+-- server scope pairs per-encounter when owners change mid-report. The
+-- backoff bounds a never-resolvable GUID (e.g. a despawned one-proc
+-- guardian) to 12 renders per fight.
 --
 -- Scope notes:
 --   * Slot pets (0xF140 space) get re-resolved here too when they act in
@@ -58,8 +69,9 @@ local TYPE_PET_OR_GUARDIAN = 0x00003000 -- TYPE_PET 0x1000 | TYPE_GUARDIAN 0x200
 local CONTROL_PLAYER       = 0x00000100
 local REACTION_FRIENDLY    = 0x00000010
 
--- [petGuid] = true once final (resolved, or retries exhausted); a pending
--- retry holds { attempts, nextAt } instead.
+-- [petGuid] = true once final for this fight (resolved, or retries
+-- exhausted); a pending retry holds { attempts, nextAt } instead. Wiped on
+-- PLAYER_REGEN_ENABLED - see the recycled-GUID note in the header.
 T.seenGuids = {}
 T.stats = { seen = 0, resolved = 0, failed = 0, no_roster = 0, retries = 0, rescued = 0 }
 
@@ -209,7 +221,16 @@ function T.probe(printer)
         .. "  failed |cffff7777" .. T.stats.failed .. "|r")
 end
 
+local function onRegenEnabled()
+    -- Fight over: forget every scan outcome so the next fight re-resolves
+    -- each GUID from scratch (recycled GUIDs may have changed owners).
+    if next(T.seenGuids) then
+        T.seenGuids = {}
+    end
+end
+
 function T.start()
     ALC.RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", onCombatLogEvent)
+    ALC.RegisterEvent("PLAYER_REGEN_ENABLED", onRegenEnabled)
     ALC.Core.Logger.debug("GuardianTracker.start() registered events")
 end
