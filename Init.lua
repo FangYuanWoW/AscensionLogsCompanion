@@ -79,6 +79,11 @@ local function boot()
     -- calls SpellFailedRelay.clearQueue() at pull-start. PetTracker enqueues
     -- the fresh pet-pair sweep into the now-empty queue.
     safeStart("PetTracker", ALC.Capture.PetTracker)
+    -- GuardianTracker resolves slot-less proc-guardians (no SPELL_SUMMON,
+    -- no pet unit slot) to owners via tooltip scan and feeds the same PP
+    -- lane as PetTracker. Its CLEU handler has no ordering dependency; it
+    -- boots after PetPipeline for the same reason PetTracker does.
+    safeStart("GuardianTracker", ALC.Capture.GuardianTracker)
     -- Telemetry boots last among capture modules. It only emits while
     -- combat-logging in a raid/party instance and gates on relay queue
     -- depth, so it's safe to run alongside CI + PP transit on the same

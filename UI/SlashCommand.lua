@@ -119,6 +119,13 @@ SlashCmdList["ALC"] = function(msg)
             L.info("Usage: /alc telemetry on | off | now | probe")
         end
 
+    elseif cmd == "guardians" then
+        if ALC.Capture.GuardianTracker and ALC.Capture.GuardianTracker.probe then
+            ALC.Capture.GuardianTracker.probe(L.info)
+        else
+            L.warn("GuardianTracker module not loaded.")
+        end
+
     elseif cmd == "keystone" or cmd == "key" then
         if ALC.Capture.KeystoneScan and ALC.Capture.KeystoneScan.probe then
             ALC.Capture.KeystoneScan.probe(L.info)
