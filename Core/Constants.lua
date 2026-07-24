@@ -19,6 +19,31 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.64.0 (Season 10 classless realms - Dawnrise + Darkmoon): adds two new
+-- detected server profiles, "dawnrise" (Freepick) and "darkmoon" (Wildcard),
+-- for the classless Season 10 realms. They run the SAME Ascension launcher
+-- client as Bronzebeard, so they share Ascension's ENTIRE capture path (CAO /
+-- MysticEnchant / transmog / Mythic+ / hero builds) - they are separate
+-- profiles ONLY so the snapshot's `server` tag tenant-routes them to their own
+-- backend, exactly the Triumvirate-vs-Epoch pattern on the Ascension side.
+-- Positive Ascension-only capture gates now check Core.Profile.isAscensionFamily()
+-- (ascension OR dawnrise OR darkmoon); the negative `not isEpochFamily()` gates
+-- already covered them. Two small classless-only CI emits ride the local CI,
+-- gated on C_Player:IsHero() so non-Hero (Bronzebeard/CoA/Epoch/Trium) snapshots
+-- stay clean of vestigial fields:
+--   * ci.primary_stat = { id, token } from C_PrimaryStat:GetActivePrimaryStat()
+--     (Enum.PrimaryStat 1..5 = Str/Agi/Int/Spirit/Stam) - the Hero-forced
+--     melee/ranged/caster axis.
+--   * ci.game_mode    = { wildcard=<bool>, draft=<bool> } from
+--     C_GameMode:IsGameModeActive(Enum.GameMode.WildCard/Draft).
+-- These are additive fields; SCHEMA_VERSION bumps 5 -> 6 so the server demuxer
+-- can key on the new field set. NOTE: a schema bump forces a one-time
+-- inspect-cache repopulate on first 0.64.0 boot for EVERY tenant (via
+-- InspectCache.rehydrate's schema guard, same as the 0.2.5 / 0.30.4 bumps) -
+-- harmless, repopulates within the first cold inspect cycle. No transport/codec
+-- changes; the F-frame wire format is unchanged. Inert for existing tenants:
+-- their detected profile and every capture branch outcome are unchanged, and
+-- the two new fields never appear on their (non-Hero) CIs.
 -- 0.63.3 (guardian scan state is per-fight): the server recycles despawned
 -- summons' GUIDs, so a guardian GUID resolved to one owner early in a session
 -- can belong to a DIFFERENT owner's summon on a later boss. GuardianTracker's
@@ -180,7 +205,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.63.3"
+C.VERSION = "0.64.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -201,7 +226,12 @@ C.VERSION = "0.63.3"
 -- for Themeatman / Saws looking like Arms while raiding as Fury). Forces an
 -- inspect-cache wipe on first 0.30.4 boot via InspectCache.rehydrate's
 -- schema guard.
-C.SCHEMA_VERSION = 5
+-- Bumped to 6 in 0.64.0: local CI gained classless-only fields primary_stat
+-- ({id,token} from C_PrimaryStat:GetActivePrimaryStat) and game_mode
+-- ({wildcard,draft} from C_GameMode:IsGameModeActive), emitted only for
+-- Hero-class characters on the Dawnrise/Darkmoon realms. Forces the same
+-- one-time inspect-cache repopulate via the rehydrate schema guard.
+C.SCHEMA_VERSION = 6
 
 -- Addon channel
 C.ADDON_PREFIX = "ALC"
@@ -298,6 +328,10 @@ C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebea
 -- Ascension's 1.0s floor.
 C.INSPECT_MIN_INTERVAL_S_BY_PROFILE = {
     ascension   = 1.0,
+    -- Dawnrise/Darkmoon are the same Ascension client; inherit the validated
+    -- 1.0s Ascension inspect floor.
+    dawnrise    = 1.0,
+    darkmoon    = 1.0,
     epoch       = 0.5,
     -- Triumvirate inherits Epoch's 0.5s floor: same 3.3.5 engine family, and
     -- Epoch (also a private 3.3.5 server) replied 24/24 at 0.30s, so 0.5s

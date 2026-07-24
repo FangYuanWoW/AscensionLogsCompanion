@@ -142,4 +142,25 @@ D.DEFAULTS = {
     ["The Forge of Souls"]                    = true,
     ["Pit of Saron"]                          = true,
     ["Halls of Reflection"]                   = true,
+
+    -- ── Classless Season 10 (Dawnrise / Darkmoon) ───────────────────────────
+    -- These realms run the SAME Ascension launcher client as Bronzebeard, and
+    -- the 2026-07-23 launch-eve client extract confirmed Map.dbc is BYTE-
+    -- IDENTICAL to BB's (374 records, no new raid roster entries for S10).
+    -- Season 10 is vanilla-tier, so the entire required classless roster is
+    -- ALREADY listed verbatim in the "Classic raid instances", "World bosses",
+    -- and "5-man
+    -- dungeons" sections above - GetInstanceInfo() returns the same MapName
+    -- strings there as on BB. Coverage verified 2026-07-23:
+    --   Raids:  Molten Core, Onyxia's Lair, Blackwing Lair, Zul'Gurub,
+    --           Ruins of Ahn'Qiraj, Temple of Ahn'Qiraj, Naxxramas   [present]
+    --   World bosses (6): Azuregos (PvE), Lord Kazzak (PvE), Ysondre (PvE),
+    --           Lethon (PvE), Emeriss (PvE), Taerar (PvE)             [present]
+    --   Dungeons: full vanilla 5-man set                             [present]
+    -- Manastorm is a scaling SCENARIO captured by Capture/ManastormScan.lua
+    -- (C_Manastorm), not a distinct Map.dbc zone - it runs inside the already-
+    -- listed dungeon maps, so no zone entry is needed. No new entries are added
+    -- here deliberately: duplicating the identical strings would be inert.
+    -- Re-run the client delta on launch day; if S10 ships a realm-override map
+    -- pack with new instance names, add them below as verbatim Map.dbc strings.
 }

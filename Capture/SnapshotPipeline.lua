@@ -371,7 +371,7 @@ local function scheduleOwnRefresh(reason)
     -- buffer the peer loop guards, so it can't clobber an in-flight peer).
     -- Epoch has no C_CharacterAdvancement; it reads own talents from
     -- GetTalentInfo, which is fresh on the talent event.
-    if ALC.Core.Profile and ALC.Core.Profile.isAscension()
+    if ALC.Core.Profile and ALC.Core.Profile.isAscensionFamily()
        and _G.C_CharacterAdvancement
        and type(_G.C_CharacterAdvancement.InspectUnit) == "function"
        and not (ALC.Capture.InspectLoop and ALC.Capture.InspectLoop.inFlight) then

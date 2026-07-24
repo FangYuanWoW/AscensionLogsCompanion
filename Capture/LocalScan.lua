@@ -85,6 +85,78 @@ local function transmogViewing()
     return val and true or false
 end
 
+-- ── Classless (Season 10) identity signals ──────────────────────────────────
+-- These APIs live on the shared Ascension superset client but only carry
+-- meaning for Hero-class characters on the classless realms (Dawnrise /
+-- Darkmoon). Emitting is gated on isHeroCharacter() in buildLocalCI so a
+-- non-Hero snapshot (Bronzebeard 9-class, CoA, Epoch, Triumvirate) stays free
+-- of vestigial fields. API shapes verified against the live Ascension client
+-- addon source (Ascension_BuildCreator / FrameXML): C_Player:IsHero(),
+-- C_PrimaryStat:GetActivePrimaryStat() -> Enum.PrimaryStat int, and
+-- C_GameMode:IsGameModeActive(Enum.GameMode.WildCard) (colon method, variadic).
+
+-- True when the local player is the classless Hero class. Prefers the
+-- first-party C_Player:IsHero(); falls back to the always-present class token
+-- (UnitClass -> "HERO") if that API is missing on some client build.
+local function isHeroCharacter()
+    if type(_G.C_Player) == "table" and type(C_Player.IsHero) == "function" then
+        local ok, res = pcall(C_Player.IsHero, C_Player)
+        if ok then return res and true or false end
+    end
+    local _, classToken = UnitClass("player")
+    return classToken == "HERO"
+end
+L.isHeroCharacter = isHeroCharacter
+
+-- Enum.PrimaryStat int -> stable token (see PRIMARY_STAT_STRING in the client's
+-- Ascension_BuildCreator/BuildEditor/EditableBuildView.lua).
+local PRIMARY_STAT_TOKENS = {
+    [1] = "strength",
+    [2] = "agility",
+    [3] = "intellect",
+    [4] = "spirit",
+    [5] = "stamina",
+}
+
+-- Hero-forced primary stat: the clean melee/ranged/caster axis a classless
+-- character locks in. Returns { id = <1..5>, token = <string> }, or nil when
+-- the API is absent or no stat is set (non-Hero characters return nil here too).
+local function primaryStat()
+    if type(_G.C_PrimaryStat) ~= "table"
+       or type(C_PrimaryStat.GetActivePrimaryStat) ~= "function" then
+        return nil
+    end
+    local ok, stat = pcall(C_PrimaryStat.GetActivePrimaryStat, C_PrimaryStat)
+    if not ok or not stat then return nil end
+    return { id = stat, token = PRIMARY_STAT_TOKENS[stat] }
+end
+
+-- Active game-mode flags. WildCard = Darkmoon's random-draft ruleset; Freepick
+-- (Dawnrise) is the ABSENCE of a restricted mode, so we capture the WildCard
+-- (and Draft) booleans explicitly and let realm identity carry Freepick.
+-- Returns { wildcard=<bool>, draft=<bool> } (only the keys that resolved), or
+-- nil where C_GameMode / Enum.GameMode is absent.
+local function gameMode()
+    if type(_G.C_GameMode) ~= "table"
+       or type(C_GameMode.IsGameModeActive) ~= "function"
+       or type(_G.Enum) ~= "table"
+       or type(Enum.GameMode) ~= "table" then
+        return nil
+    end
+    local out = nil
+    local probes = { wildcard = Enum.GameMode.WildCard, draft = Enum.GameMode.Draft }
+    for key, mask in pairs(probes) do
+        if mask ~= nil then
+            local ok, active = pcall(C_GameMode.IsGameModeActive, C_GameMode, mask)
+            if ok then
+                out = out or {}
+                out[key] = active and true or false
+            end
+        end
+    end
+    return out
+end
+
 -- Wraps GetInstanceInfo() into a structured snapshot field so the backend
 -- can dispatch by both difficulty integer and the friendly name.
 --
@@ -219,6 +291,15 @@ function L.buildLocalCI(sessionId)
         instance = instanceInfo(),
         transmog_viewing = transmogViewing(),  -- v0.2.5: logger's "show transmog" setting; gates capture quality interpretation on the backend
     }
+
+    -- Classless (Season 10) identity signals - schema 6. Only stamped for
+    -- Hero-class characters (the Dawnrise/Darkmoon realms); nil/absent on every
+    -- other tenant so their CI shape is unchanged. Backend ignores unknown
+    -- fields, so this is safe even if an older demuxer sees them.
+    if isHeroCharacter() then
+        ci.primary_stat = primaryStat()
+        ci.game_mode    = gameMode()
+    end
 
     if isAscension then
         ci.mystic_enchants = {

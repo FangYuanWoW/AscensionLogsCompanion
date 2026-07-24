@@ -105,13 +105,17 @@ function G.readGear(unit)
                     end
                 end
 
-                -- Ascension-only: vanity-detection flag via C_VanityCollection.
-                -- Independent of divergence — catches the "fully-poisoned"
-                -- peer state where both link and GetInventoryItemID return
-                -- the same vanity id, so divergence is invisible. The
-                -- C_VanityCollection namespace doesn't exist on Epoch
-                -- (probe-confirmed), so the entire block is BB-only.
-                if (ALC.Profile == nil or ALC.Profile == "ascension")
+                -- Ascension-family only: vanity-detection flag via
+                -- C_VanityCollection. Independent of divergence — catches the
+                -- "fully-poisoned" peer state where both link and
+                -- GetInventoryItemID return the same vanity id, so divergence
+                -- is invisible. The C_VanityCollection namespace doesn't exist
+                -- on Epoch (probe-confirmed), so the block is inert there. The
+                -- classless realms (Dawnrise/Darkmoon) run the same Ascension
+                -- client with the same vanity system, so they take this branch
+                -- too (isAscensionFamily); the nil-profile case (pre-detect)
+                -- keeps the original permissive fallback.
+                if (ALC.Profile == nil or ALC.Core.Profile.isAscensionFamily())
                    and _G.C_VanityCollection
                    and type(C_VanityCollection.GetItem) == "function"
                    and parsed.item_id and parsed.item_id > 0 then
