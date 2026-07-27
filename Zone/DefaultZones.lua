@@ -72,6 +72,14 @@ D.DEFAULTS = {
     ["Stratholme"]            = true,
     ["Scholomance"]           = true,
 
+    -- CoA (Conquest of Azeroth) custom 5-man dungeons. Verbatim Map.dbc
+    -- MapName_lang strings from the live client (maps 933/936/937) - these are
+    -- what GetInstanceInfo() returns inside. Note "Road to De Other Side" is
+    -- the full client name; the dungeon is commonly called just De Other Side.
+    ["Vaults of the Inquisition"] = true,
+    ["Regret's Chasm"]            = true,
+    ["Road to De Other Side"]     = true,
+
     -- ── Triumvirate (stock WotLK 3.3.5a) ─────────────────────────────────
     -- Verbatim Map.dbc MapName_lang (enUS) strings = exactly what
     -- GetInstanceInfo() returns on a stock 3.3.5a client (extracted from the
