@@ -30,6 +30,14 @@
 -- being wrong. So the cache is keyed on EncounterTracker.pullId and resets
 -- whenever the pull changes.
 --
+-- "NO VALUE" HAS THREE CAUSES, AND THEY ARE NOT THE SAME EVENT
+-- The call can (a) THROW, (b) succeed and return nil for a Hero we cannot
+-- currently track, or (c) succeed and return nil because the unit has no path
+-- at all. Only (b) is worth retrying. (a) is bounded by MAX_ERRORS - a unit
+-- that throws will keep throwing - and (c) is permanent. None of the three can
+-- ever be mistaken for DATA: only a real value writes, so a failure never
+-- files a player under a path they did not pick.
+--
 -- nil MEANS TWO DIFFERENT THINGS
 -- For a HERO unit, nil means "not trackable yet" (out of range / not loaded):
 -- it never writes and never evicts, the GUID stays queued and is retried next
@@ -65,6 +73,14 @@ local PRIMARY_STAT_TOKENS = {
 P.pullId = nil       -- pull the current cache belongs to
 P.resolved = {}      -- GUID -> { id = <int>, token = <string> }
 P.unresolved = {}    -- GUID -> true (still to read)
+P.errors = {}        -- GUID -> consecutive pcall failures this pull
+P.stats = nil        -- per-pull counters, for diagnosing thin coverage
+
+-- A unit whose read keeps THROWING is not the same as one that keeps
+-- answering nil. nil is expected (out of range); an error is not, and
+-- retrying it every tick for the whole pull just spins. Give up on a unit
+-- after this many consecutive errors.
+local MAX_ERRORS = 3
 
 local function api()
     return type(_G.GetUnitPrimaryStat) == "function" and _G.GetUnitPrimaryStat or nil
@@ -94,6 +110,11 @@ function P.resetForPull(pullId)
     P.pullId = pullId
     P.resolved = {}
     P.unresolved = {}
+    P.errors = {}
+    -- Kept so a thin-coverage pull can be explained after the fact rather than
+    -- guessed at: "nobody was in range" and "the API was erroring" look
+    -- identical from the outside, which is exactly how the non-Hero bug hid.
+    P.stats = { resolved = 0, errored = 0, dropped_non_hero = 0, dropped_error = 0 }
     P.reseed()
 end
 
@@ -131,14 +152,36 @@ function P.tick()
             local _, classToken = UnitClass(unit)
             if classToken ~= "HERO" then
                 P.unresolved[guid] = nil
+                if P.stats then
+                    P.stats.dropped_non_hero = P.stats.dropped_non_hero + 1
+                end
             else
                 local ok, stat = pcall(get, unit)
-                -- Only a real value clears the GUID. Errors and nil leave it
-                -- queued, because for a Hero those DO mean "not yet".
-                if ok and stat and stat ~= 0 then
+                if not ok then
+                    -- The call FAILED - distinct from it succeeding and saying
+                    -- "nothing". Bound these: a unit that throws every tick
+                    -- will keep throwing, and spinning on it buys nothing.
+                    local n = (P.errors[guid] or 0) + 1
+                    P.errors[guid] = n
+                    if P.stats then P.stats.errored = P.stats.errored + 1 end
+                    if n >= MAX_ERRORS then
+                        P.unresolved[guid] = nil
+                        if P.stats then
+                            P.stats.dropped_error = P.stats.dropped_error + 1
+                        end
+                        ALC.Core.Logger.debug(
+                            "PrimaryStatScan: giving up on " .. tostring(unit)
+                            .. " after " .. n .. " errors: " .. tostring(stat))
+                    end
+                elseif stat and stat ~= 0 then
+                    -- A real value: the only thing that ever writes.
                     P.resolved[guid] = { id = stat, token = PRIMARY_STAT_TOKENS[stat] }
                     P.unresolved[guid] = nil
+                    P.errors[guid] = nil
+                    if P.stats then P.stats.resolved = P.stats.resolved + 1 end
                 end
+                -- else: succeeded and returned nil = "not trackable yet" for a
+                -- Hero. Expected, unbounded retry, no error counted.
             end
         else
             -- Unit token vanished (left the group): stop chasing it.
