@@ -688,6 +688,18 @@ end
 
 -- Scheduler tick: called every INSPECT_MIN_INTERVAL_S
 local function tick()
+    -- Primary-stat sweep rides this same timer but is otherwise independent of
+    -- the inspect rotation: it needs no NotifyInspect and never touches the
+    -- shared inspect buffer, so it runs even while an inspect is in flight (and
+    -- while the character pane is open, which only gates inspects). It
+    -- self-silences once every roster member is resolved for the current pull.
+    if ALC.Capture.PrimaryStatScan then
+        local okPS, errPS = pcall(ALC.Capture.PrimaryStatScan.tick)
+        if not okPS then
+            ALC.Core.Logger.debug("PrimaryStatScan.tick failed: " .. tostring(errPS))
+        end
+    end
+
     if I.inFlight then
         local infl = I.inFlight
         local elapsed = now() - infl.startedAt
@@ -826,6 +838,12 @@ end
 
 function I.onRosterChange()
     rebuildUnitIndex()
+
+    -- Fold newcomers into the primary-stat sweep without discarding values
+    -- already resolved for the rest of the group this pull.
+    if ALC.Capture.PrimaryStatScan then
+        pcall(ALC.Capture.PrimaryStatScan.onRosterChange)
+    end
 
     -- Purge entries for players no longer in group (raid + party).
     -- UnitGUID("player") can transiently return nil during a raid disband

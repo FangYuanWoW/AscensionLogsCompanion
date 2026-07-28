@@ -343,6 +343,24 @@ function L.buildInspectCI(unit, sessionId)
 
     local _, classToken = UnitClass(unit)
     local _, raceToken  = UnitRace(unit)
+
+    -- Classless (Season 10) peer path - schema 6. Unlike the logger's own
+    -- primary_stat (a direct GetActivePrimaryStat call), a peer's comes from
+    -- PrimaryStatScan's per-pull roster sweep, because GetUnitPrimaryStat is a
+    -- plain unit read and does not ride the inspect round-trip at all. It is
+    -- therefore often already resolved BEFORE this inspect completes.
+    --
+    -- nil is a legitimate outcome (peer was out of range for the whole pull),
+    -- and the field is simply omitted then - the backend still has its
+    -- marker-aura inference as the fallback, so an absent value degrades to
+    -- today's behaviour rather than regressing.
+    local peerPrimaryStat = nil
+    local PSS = ALC.Capture and ALC.Capture.PrimaryStatScan
+    if PSS and classToken == "HERO" then
+        local okPS, val = pcall(PSS.get, UnitGUID(unit))
+        if okPS then peerPrimaryStat = val end
+    end
+
     return {
         schema_version = C.SCHEMA_VERSION,
         addon_version  = C.VERSION,
@@ -368,6 +386,7 @@ function L.buildInspectCI(unit, sessionId)
             guild = (GetGuildInfo(unit)),  -- guild name on the player blob (full {name,rank} stays at ci.guild)
         },
         guild = guildInfo(unit),
+        primary_stat = peerPrimaryStat,
         specialization = {
             active_spec_id = nil,
             ca_known = nil,
