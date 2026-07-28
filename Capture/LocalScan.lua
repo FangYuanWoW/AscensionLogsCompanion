@@ -116,11 +116,23 @@ local PRIMARY_STAT_TOKENS = {
     [3] = "intellect",
     [4] = "spirit",
     [5] = "stamina",
+    -- Duality is 6, read off Enum.PrimaryStat in game on 2026-07-27 (it was
+    -- missing here, so every Duality character emitted token=nil). It is the
+    -- MOST common path on Darkmoon, so this was the single biggest gap in the
+    -- map. Note the client shows players "Path of Intelligence" and "Path of
+    -- Healing" for ids 3 and 4 while these internal tokens say intellect /
+    -- spirit; the tokens stay internal and the server maps them to the
+    -- player-facing names.
+    [6] = "duality",
 }
 
--- Hero-forced primary stat: the clean melee/ranged/caster axis a classless
--- character locks in. Returns { id = <1..5>, token = <string> }, or nil when
--- the API is absent or no stat is set (non-Hero characters return nil here too).
+-- Hero-forced primary stat: the path a classless character locks in.
+-- Returns { id = <1..6>, token = <string> }, or nil when the API is absent or
+-- no stat is set (non-Hero characters return nil here too).
+--
+-- id 5 (stamina) is in Enum.PrimaryStat but is NOT a selectable path -
+-- GetPrimaryStatInfo(5) returns nothing in game - so it should never be seen.
+-- It stays mapped so a surprise value still resolves to a token.
 local function primaryStat()
     if type(_G.C_PrimaryStat) ~= "table"
        or type(C_PrimaryStat.GetActivePrimaryStat) ~= "function" then
