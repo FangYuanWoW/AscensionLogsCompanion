@@ -30,11 +30,19 @@
 -- being wrong. So the cache is keyed on EncounterTracker.pullId and resets
 -- whenever the pull changes.
 --
--- nil IS "NOT YET", NEVER "NO PATH"
--- Out-of-range / not-yet-loaded units return nil. A nil never writes and never
--- evicts - the GUID simply stays in the unresolved set and is retried next
--- tick. Once the unresolved set empties, the sweep stops entirely until the
--- next pull, so a resolved raid costs nothing.
+-- nil MEANS TWO DIFFERENT THINGS
+-- For a HERO unit, nil means "not trackable yet" (out of range / not loaded):
+-- it never writes and never evicts, the GUID stays queued and is retried next
+-- tick. For a NON-HERO unit, nil means "has no path at all" and is permanent -
+-- verified in game 2026-07-27, where a WARRIOR that was visible AND inside
+-- inspect range still returned nil on every sample while a HERO party member
+-- resolved 7/7. Non-Hero units are therefore dropped from the queue on sight
+-- rather than retried; conflating the two would leave the unresolved set
+-- permanently non-empty on every non-classless tenant (nobody is Hero on
+-- BB/Epoch/CoA/Trium) and the sweep would never go quiet.
+--
+-- Once the unresolved set empties, the sweep stops entirely until the next
+-- pull, so a resolved raid costs nothing.
 
 local ALC = _G.ALC
 local P = {}
@@ -110,11 +118,27 @@ function P.tick()
     for guid in pairs(P.unresolved) do
         local unit = byGuid[guid]
         if unit then
-            local ok, stat = pcall(get, unit)
-            -- Only a real value clears the GUID. Errors and nil leave it queued.
-            if ok and stat and stat ~= 0 then
-                P.resolved[guid] = { id = stat, token = PRIMARY_STAT_TOKENS[stat] }
+            -- nil has TWO meanings, and conflating them is a bug: "not
+            -- trackable yet" (retry) versus "this unit has no path at all"
+            -- (never retry). Verified in game 2026-07-27: a WARRIOR unit that
+            -- was visible AND inside inspect range still returned nil on every
+            -- sample, while a HERO party member resolved 7/7.
+            --
+            -- Without this guard the unresolved set never empties on any
+            -- non-classless tenant - nobody is Hero on BB/Epoch/CoA/Trium - so
+            -- the sweep would walk the whole roster every tick forever and
+            -- never go quiet. Drop non-Hero units instead of chasing them.
+            local _, classToken = UnitClass(unit)
+            if classToken ~= "HERO" then
                 P.unresolved[guid] = nil
+            else
+                local ok, stat = pcall(get, unit)
+                -- Only a real value clears the GUID. Errors and nil leave it
+                -- queued, because for a Hero those DO mean "not yet".
+                if ok and stat and stat ~= 0 then
+                    P.resolved[guid] = { id = stat, token = PRIMARY_STAT_TOKENS[stat] }
+                    P.unresolved[guid] = nil
+                end
             end
         else
             -- Unit token vanished (left the group): stop chasing it.
