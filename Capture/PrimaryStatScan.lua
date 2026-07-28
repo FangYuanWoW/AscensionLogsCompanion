@@ -82,6 +82,21 @@ P.stats = nil        -- per-pull counters, for diagnosing thin coverage
 -- after this many consecutive errors.
 local MAX_ERRORS = 3
 
+-- The sweep RIDES InspectLoop's 1s timer but must not inherit its CADENCE.
+-- Those two loops have opposite shapes: inspect fires ONE NotifyInspect per
+-- tick and is paced at 1s because it is a server round-trip that can be
+-- throttled. This is a purely local read with nothing to throttle, but it
+-- touches EVERY unresolved unit per pass - so at 1Hz an out-of-range player
+-- would be polled ~300 times across a five-minute fight.
+--
+-- The value is static within a pull (the path can only change between
+-- encounters), so the only question a retry answers is "has this player come
+-- into range yet". Every few seconds is ample for that, and it cuts the work
+-- by the same factor. Resolution speed is unaffected: anyone in range at the
+-- pull is captured on the first pass.
+local MIN_SWEEP_INTERVAL_S = 3.0
+P.lastSweepAt = 0
+
 local function api()
     return type(_G.GetUnitPrimaryStat) == "function" and _G.GetUnitPrimaryStat or nil
 end
@@ -108,6 +123,9 @@ end
 -- module: see the cache-scope note in the header.
 function P.resetForPull(pullId)
     P.pullId = pullId
+    -- Sweep immediately on a new pull rather than waiting out the interval:
+    -- the pull is exactly when the value matters most.
+    P.lastSweepAt = 0
     P.resolved = {}
     P.unresolved = {}
     P.errors = {}
@@ -124,6 +142,11 @@ function P.tick()
     local get = api()
     if not get then return end
 
+    -- Own cadence, deliberately slower than the inspect rotation we ride.
+    -- The pull check below still runs every tick, so a new pull resets the
+    -- cache immediately rather than up to MIN_SWEEP_INTERVAL_S late.
+    local nowT = GetTime()
+
     local ET = ALC.Capture and ALC.Capture.EncounterTracker
     local pullId = ET and ET.getCurrentPullId and ET.getCurrentPullId() or 0
     if pullId ~= P.pullId then
@@ -131,6 +154,10 @@ function P.tick()
     end
 
     if P.isComplete() then return end
+
+    -- Throttle the actual sweep (but never the pull-reset above).
+    if (nowT - (P.lastSweepAt or 0)) < MIN_SWEEP_INTERVAL_S then return end
+    P.lastSweepAt = nowT
 
     local loop = ALC.Capture and ALC.Capture.InspectLoop
     local byGuid = loop and loop.unitByGuid or nil
