@@ -205,7 +205,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.64.0"
+C.VERSION = "0.65.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -231,7 +231,13 @@ C.VERSION = "0.64.0"
 -- ({wildcard,draft} from C_GameMode:IsGameModeActive), emitted only for
 -- Hero-class characters on the Dawnrise/Darkmoon realms. Forces the same
 -- one-time inspect-cache repopulate via the rehydrate schema guard.
-C.SCHEMA_VERSION = 6
+-- Bumped to 7 in 0.65.0: INSPECT CIs gained primary_stat for Hero peers (it
+-- reached local CIs in 0.64.0 / schema 6). The bump is deliberate rather than
+-- cosmetic - InspectCache is persisted and schema-guarded, so without it every
+-- already-cached peer would keep serving a CI with no primary_stat until the
+-- normal re-inspect cadence caught up. Bumping wipes the cache and re-inspects
+-- fresh, which is the point of the release.
+C.SCHEMA_VERSION = 7
 
 -- Addon channel
 C.ADDON_PREFIX = "ALC"
