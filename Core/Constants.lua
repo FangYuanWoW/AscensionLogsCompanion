@@ -19,6 +19,15 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.65.1 (dungeon boss registry sync): BossRegistry now carries the full
+-- 5-man dungeon rosters (all wings, rares included) instead of the partial
+-- dev-fixture lists. Matters for chain-pulls: the per-pull CI republish rides
+-- PLAYER_REGEN_DISABLED, so a boss engaged without dropping combat (trash
+-- pulled straight into the boss) only gets a mid-combat CI republish via the
+-- BossRegistry name match. Unregistered bosses (e.g. Herod) produced no CI
+-- inside their encounter window, and the backend's instance-difficulty
+-- fallback then had nothing to read - mythic dungeon kills landed as
+-- 'normal'. Data-only change; no transport/schema impact.
 -- 0.64.0 (Season 10 classless realms - Dawnrise + Darkmoon): adds two new
 -- detected server profiles, "dawnrise" (Freepick) and "darkmoon" (Wildcard),
 -- for the classless Season 10 realms. They run the SAME Ascension launcher
@@ -205,7 +214,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.65.0"
+C.VERSION = "0.65.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
