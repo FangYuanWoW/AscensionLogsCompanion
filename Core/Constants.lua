@@ -31,8 +31,16 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- on MYTHIC_PLUS_COMPLETE. The Ascension Logs Uploader reads the
 -- SavedVariables file from disk and posts new records to the site; dedup is
 -- server-side. FIFO cap of KS_RUNS_CAP records; the open run is never
--- evicted. No transport/codec changes; the KS relay chunk family is
--- untouched and CI SCHEMA_VERSION stays 7.
+-- evicted. Roster members also carry an embedded compact CI (gear, mystic
+-- enchants, CAO build): own from LocalScan.buildLocalCI, peers from the
+-- inspect cache as InspectLoop's rotation lands them (first copy wins;
+-- resume/close passes fill stragglers). Additionally harvests the client's
+-- OWN best-run history (FrameXML C_Keystones / ReadCustomWTF("Keystones"):
+-- per-dungeon + per-affix-set bests for every character on the install,
+-- with date/time/overtime/level/affixes/class-tagged roster) into
+-- ALC_KeystoneRuns.bests - retroactive history predating the addon. No
+-- transport/codec changes; the KS relay chunk family is untouched and CI
+-- SCHEMA_VERSION stays 7.
 -- 0.65.1 (dungeon boss registry sync): BossRegistry now carries the full
 -- 5-man dungeon rosters (all wings, rares included) instead of the partial
 -- dev-fixture lists. Matters for chain-pulls: the per-pull CI republish rides

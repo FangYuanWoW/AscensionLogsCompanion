@@ -239,6 +239,50 @@ local function captureRoster()
     return out
 end
 
+-- Compact CI subset embedded per roster member: build + gear identity only
+-- (drops the pet/instance/arena metadata a run record doesn't need).
+local function compactCI(ci)
+    if type(ci) ~= "table" then return nil end
+    if not (ci.gear or ci.specialization or ci.talents or ci.mystic_enchants) then
+        return nil
+    end
+    return {
+        gear            = ci.gear,            -- per-slot item/enchant/gems/suffix
+        mystic_enchants = ci.mystic_enchants, -- Ascension: applied + per_slot
+        specialization  = ci.specialization,  -- CAO build state
+        talents         = ci.talents,         -- epoch-family talent shape
+        primary_stat    = ci.primary_stat,    -- classless realms
+        game_mode       = ci.game_mode,
+    }
+end
+
+-- Attach build/gear to roster members: own CI straight from LocalScan, peers
+-- from the inspect cache as InspectLoop's rotation lands them. First copy
+-- wins (the earliest snapshot is closest to what they ran with); later
+-- passes (resume, close) only fill members still missing.
+local function enrichRosterCI(run)
+    if not run or not run.roster then return end
+    local ownGuid = UnitGUID("player")
+    for i = 1, #run.roster do
+        local m = run.roster[i]
+        if not m.ci and m.guid then
+            local ci
+            if m.guid == ownGuid and ALC.Capture.LocalScan
+                    and ALC.Capture.LocalScan.buildLocalCI then
+                local ok, own = pcall(ALC.Capture.LocalScan.buildLocalCI,
+                    (_G.ALC_LocalState or {}).session_id or "runrec")
+                if ok then ci = own end
+            else
+                local IC = ALC.Capture.InspectCache
+                local entry = IC and IC.get and IC.get(m.guid)
+                ci = entry and entry.ci
+            end
+            m.ci = compactCI(ci)
+            if m.ci then m.ci_at = nowMs() end
+        end
+    end
+end
+
 -- Death tracking: while a run is open, count UNIT_DIED for roster members.
 -- The CLEU handler is registered once and no-ops when no watch is armed.
 K.deathWatch = nil   -- { guids = {guid=name}, names = {name=true} }
@@ -279,6 +323,8 @@ end
 
 -- outcome: "timed" | "depleted" | "abandoned". live may be nil (abandoned).
 local function closeRunRecord(run, outcome, timed, live)
+    -- Last chance to fill builds for members whose inspect landed mid-run.
+    pcall(enrichRosterCI, run)
     run.open = nil
     run.outcome = outcome
     run.timed = timed
@@ -368,11 +414,141 @@ local function openRun(resumed, live)
     store.runs[#store.runs + 1] = run
     enforceCap(store)
     armDeathWatch(run)
+    pcall(enrichRosterCI, run)
     ALC.Core.Logger.debug(string.format(
         "KeystoneScan run opened: +%s dungeon=%s roster=%d resumed=%s",
         tostring(run.key_level), tostring(run.dungeon_id),
         #run.roster, tostring(resumed or false)))
     return run
+end
+
+------------------------------------------------------------------------------
+-- Best-run history harvest. The client's own M+ UI keeps BEST runs (one per
+-- dungeon + one per weekly affix set, per character) client-side: FrameXML's
+-- C_Keystones persists a KeystoneBests table via WriteCustomWTF("Keystones"),
+-- keyed "Name - Realm" so it covers EVERY character on this install - and the
+-- run tables carry Date (unix epoch), Time (s), Overtime, Level, Affixes and
+-- the class-tagged roster. Harvesting it gives retroactive history from
+-- before the addon shipped. Only bests exist (the client discards non-best
+-- runs), and dungeon ids here are LFGDungeons ids - a DIFFERENT id space from
+-- GetActiveKeystoneInfo().dungeonID; the backend resolves both.
+--
+-- Records land in ALC_KeystoneRuns.bests, keyed so re-harvests are no-ops;
+-- an improved best has a new Date and lands as a new record.
+
+local BESTS_SOFT_CAP = 800   -- guard against a pathological store; realistic counts are far lower
+
+local function addBest(bests, kind, saveKey, id, run, expansion)
+    if type(run) ~= "table" or not run.Date then return 0 end
+    local key = kind .. "|" .. tostring(id) .. "|" .. tostring(saveKey)
+        .. "|" .. tostring(run.Date)
+    if bests[key] then return 0 end
+    local n = 0
+    for _ in pairs(bests) do n = n + 1; if n >= BESTS_SOFT_CAP then return 0 end end
+    local players = {}
+    if type(run.Players) == "table" then
+        for i = 1, #run.Players do
+            local p = run.Players[i]
+            if type(p) == "table" then
+                players[#players + 1] = { name = p[1], class = p[2] }
+            end
+        end
+    end
+    bests[key] = {
+        kind         = kind,               -- "dungeon_best" | "set_best"
+        save_key     = saveKey,            -- "Name - Realm"
+        dungeon_id   = (kind == "dungeon_best") and id or nil,  -- LFGDungeons id
+        affix_set    = (kind == "set_best") and tostring(id) or nil,
+        expansion    = expansion,
+        level        = run.Level,
+        time_s       = run.Time,
+        overtime     = run.Overtime and true or false,
+        date         = run.Date,
+        affixes      = copyList(run.Affixes),
+        players      = players,
+        harvested_at = nowMs(),
+    }
+    return 1
+end
+
+function K.harvestBests()
+    if not shouldRecordRuns() then return 0 end
+    local store = runStore()
+    store.bests = store.bests or {}
+    local bests, added = store.bests, 0
+
+    -- Preferred: decode the client's whole KeystoneBests store (covers every
+    -- character on this install). Reads are not secure-gated; writes are.
+    local decoded
+    if type(_G.ReadCustomWTF) == "function" and type(_G.C_Serialize) == "table" then
+        local okR, raw = pcall(_G.ReadCustomWTF, "Keystones")
+        if okR and type(raw) == "string" and raw ~= "" then
+            local okD, data = pcall(function()
+                return _G.C_Serialize:DeserializeDecompressFromPrint(raw)
+            end)
+            if okD and type(data) == "table" then decoded = data end
+        end
+    end
+
+    if decoded then
+        for outerKey, inner in pairs(decoded) do
+            if type(inner) == "table" then
+                if type(outerKey) == "number" and outerKey >= 100 then
+                    -- KeystoneBests[dungeonID][saveKey] = run. (Expansion
+                    -- enums are 0/1/2; LFGDungeons ids are large numbers.)
+                    for saveKey, run in pairs(inner) do
+                        added = added + addBest(bests, "dungeon_best", saveKey, outerKey, run)
+                    end
+                else
+                    -- KeystoneBests[expansion][affixSetString][saveKey] = run
+                    for setStr, bySave in pairs(inner) do
+                        if type(bySave) == "table" then
+                            for saveKey, run in pairs(bySave) do
+                                added = added + addBest(bests, "set_best", saveKey, setStr, run, outerKey)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    else
+        -- Fallback: the public getters, current character only.
+        local CK = _G.C_Keystones
+        if type(CK) == "table" and type(CK.GetTimedDungeonsForExpansion) == "function"
+                and type(CK.GetDungeonBest) == "function" then
+            local okKey, saveKey = pcall(CK.GetPlayerSaveKey)
+            if not okKey or not saveKey then saveKey = "player" end
+            for exp = 0, 2 do
+                local okL, list = pcall(CK.GetTimedDungeonsForExpansion, exp)
+                if okL and type(list) == "table" then
+                    for i = 1, #list do
+                        local okB, best = pcall(CK.GetDungeonBest, list[i])
+                        if okB then
+                            added = added + addBest(bests, "dungeon_best", saveKey, list[i], best, exp)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if added > 0 then
+        ALC.Core.Logger.debug("KeystoneScan: harvested " .. added .. " new best-run records")
+    end
+    return added
+end
+
+local harvestFrame
+function K.scheduleHarvest(delay)
+    if not isAvailable() then return end
+    if not harvestFrame then harvestFrame = CreateFrame("Frame") end
+    local elapsed, wait = 0, delay or 8
+    harvestFrame:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + dt
+        if elapsed < wait then return end
+        self:SetScript("OnUpdate", nil)
+        pcall(K.harvestBests)
+    end)
 end
 
 ------------------------------------------------------------------------------
@@ -425,6 +601,7 @@ local function onResumePoll(isFinal)
                 open.roster_at = nowMs()
             end
             armDeathWatch(open)
+            pcall(enrichRosterCI, open)
             ALC.Core.Logger.debug("KeystoneScan: reattached to open run after loading screen")
             return true
         end
@@ -740,6 +917,9 @@ local function onComplete(a1)
         if open then
             closeRunRecord(open, outcome, K.state.completed_timed, live)
         end
+        -- The client writes its own best-run record in ITS complete handler
+        -- (ordering vs ours is undefined) - harvest shortly after.
+        K.scheduleHarvest(5)
     end
 end
 
@@ -763,7 +943,11 @@ function K.start()
     reg("MYTHIC_PLUS_COMPLETE",          function(_e, a1) onComplete(a1) end)
     -- Resume/abandon detection for the durable run records: fires on login,
     -- /reload and every loading screen (the polls sort out which it was).
-    reg("PLAYER_ENTERING_WORLD",         function() K.scheduleResumePolls() end)
+    -- The best-run harvest rides the same trigger (once, 8s after loading).
+    reg("PLAYER_ENTERING_WORLD",         function()
+        K.scheduleResumePolls()
+        K.scheduleHarvest(8)
+    end)
 
     -- Toast fires only on confirmed landing: hook the relay's landed callback.
     local relay = ALC.Transport.SpellFailedRelay
@@ -835,5 +1019,13 @@ function K.probe(logger)
         end
     else
         log("Run records: none stored yet")
+    end
+    local bests = store and store.bests
+    if bests then
+        local n = 0
+        for _ in pairs(bests) do n = n + 1 end
+        log("Best-run history: " .. n .. " harvested records")
+    else
+        log("Best-run history: not harvested yet")
     end
 end
