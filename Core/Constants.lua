@@ -19,6 +19,20 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.66.0 (durable Mythic+ run records): KeystoneScan now writes a full
+-- per-run record into a new SavedVariablesPerCharacter store
+-- (ALC_KeystoneRuns) for EVERY party member running the addon, not just the
+-- logger: roster (name/realm/guid/class/race/level for all five, stamped at
+-- key start), dungeon/level/affixes/timer budget, per-member death counts
+-- (CLEU UNIT_DIED), outcome (timed/depleted/abandoned) and final
+-- time/progress. Records open on MYTHIC_PLUS_STARTED (a crash mid-run still
+-- leaves the attempt on disk), survive disconnects (PLAYER_ENTERING_WORLD
+-- polls the live keystone state and re-attaches or adopts the run), and close
+-- on MYTHIC_PLUS_COMPLETE. The Ascension Logs Uploader reads the
+-- SavedVariables file from disk and posts new records to the site; dedup is
+-- server-side. FIFO cap of KS_RUNS_CAP records; the open run is never
+-- evicted. No transport/codec changes; the KS relay chunk family is
+-- untouched and CI SCHEMA_VERSION stays 7.
 -- 0.65.1 (dungeon boss registry sync): BossRegistry now carries the full
 -- 5-man dungeon rosters (all wings, rares included) instead of the partial
 -- dev-fixture lists. Matters for chain-pulls: the per-pull CI republish rides
@@ -214,7 +228,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.65.1"
+C.VERSION = "0.66.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -317,6 +331,15 @@ C.KS_SCHEMA_VERSION   = 1
 -- fail-cast was prototyped to guarantee a landing but removed: it requires
 -- protected-function calls that taint from insecure code.)
 C.KS_KEEPALIVE_S = 45    -- relay stays active this long after MYTHIC_PLUS_COMPLETE
+
+-- 0.66.0: durable per-run keystone records (ALC_KeystoneRuns
+-- SavedVariablesPerCharacter). Written by KeystoneScan for EVERY party member
+-- running the addon (not logger-gated); the Ascension Logs Uploader reads the
+-- SavedVariables file from disk and posts new records to the site. Append-only
+-- with a FIFO cap; the currently-open run is never evicted; dedup is
+-- server-side.
+C.KS_RUNS_SCHEMA = 1
+C.KS_RUNS_CAP    = 200
 
 -- Manastorm (MS) family: CoA-only scaling scenario. One "level_cleared" record
 -- per MANASTORM_LEVEL_COMPLETED (arg1 = level number). Body shape:

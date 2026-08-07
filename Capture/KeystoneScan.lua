@@ -157,6 +157,309 @@ function K.readActiveKeystone()
 end
 
 ------------------------------------------------------------------------------
+-- Durable per-run records (ALC_KeystoneRuns, SavedVariablesPerCharacter).
+--
+-- The KS chunks below serve LIVE logging: they ride the combat log and only
+-- exist while a logger is present. These records serve the UPLOADER: a plain
+-- per-character list of every run this character participates in, written the
+-- moment the run starts (a crash mid-run still leaves the attempt on disk),
+-- closed on MYTHIC_PLUS_COMPLETE, and re-attached after a disconnect
+-- (PLAYER_ENTERING_WORLD polls the live keystone state). The desktop app
+-- reads the SavedVariables file from disk and posts new records; dedup is
+-- server-side, so records are append-only here and pruned only by the FIFO
+-- cap (the open run is never evicted).
+--
+-- NOT logger-gated: every party member with the addon records their own copy
+-- of the run - any one of the five can upload it.
+
+local function shouldRecordRuns()
+    if not isAvailable() then return false end
+    if _G.ALC_Config and ALC_Config.keystone_enabled == false then return false end
+    return true
+end
+
+local function runStore()
+    local s = _G.ALC_KeystoneRuns
+    if type(s) ~= "table" or type(s.runs) ~= "table" then
+        s = { schema = C.KS_RUNS_SCHEMA, runs = {} }
+        _G.ALC_KeystoneRuns = s
+    end
+    s.schema = C.KS_RUNS_SCHEMA
+    return s
+end
+
+-- Newest open run (search from the end; there is at most one by construction).
+local function findOpenRun(store)
+    for i = #store.runs, 1, -1 do
+        if store.runs[i].open then return i, store.runs[i] end
+    end
+    return nil, nil
+end
+
+local function enforceCap(store)
+    local cap = C.KS_RUNS_CAP or 200
+    while #store.runs > cap do
+        local removed = false
+        for i = 1, #store.runs do
+            if not store.runs[i].open then
+                table.remove(store.runs, i)
+                removed = true
+                break
+            end
+        end
+        if not removed then break end
+    end
+end
+
+local function rosterUnit(unit)
+    if not UnitExists(unit) then return nil end
+    local name, realm = UnitName(unit)
+    if not name then return nil end
+    local _, classToken = UnitClass(unit)
+    local _, raceToken = UnitRace(unit)
+    return {
+        name  = name,
+        realm = (realm and realm ~= "" and realm) or nil,
+        guid  = UnitGUID(unit),
+        class = classToken,
+        race  = raceToken,
+        level = UnitLevel(unit),
+    }
+end
+
+-- Player + party1-4 (M+ is 5-man; inside the run the party units are the
+-- authoritative roster).
+local function captureRoster()
+    local out = {}
+    local units = { "player", "party1", "party2", "party3", "party4" }
+    for i = 1, #units do
+        local m = rosterUnit(units[i])
+        if m then out[#out + 1] = m end
+    end
+    return out
+end
+
+-- Death tracking: while a run is open, count UNIT_DIED for roster members.
+-- The CLEU handler is registered once and no-ops when no watch is armed.
+K.deathWatch = nil   -- { guids = {guid=name}, names = {name=true} }
+local cleuRegistered = false
+
+local function ensureCleu()
+    if cleuRegistered then return end
+    cleuRegistered = true
+    ALC.RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", function(_e, ...)
+        local w = K.deathWatch
+        if not w then return end
+        -- 3.3.5 signature: (timestamp, subEvent, srcGUID, srcName, srcFlags,
+        --                   destGUID, destName, destFlags, ...)
+        local _, subEvent, _, _, _, destGUID, destName = ...
+        if subEvent ~= "UNIT_DIED" then return end
+        local who = destGUID and w.guids[destGUID]
+        if not who and destName and w.names[destName] then who = destName end
+        if not who then return end
+        local _, run = findOpenRun(runStore())
+        if not run then return end
+        run.deaths = (run.deaths or 0) + 1
+        run.deaths_by = run.deaths_by or {}
+        run.deaths_by[who] = (run.deaths_by[who] or 0) + 1
+    end)
+end
+
+local function armDeathWatch(run)
+    local w = { guids = {}, names = {} }
+    local roster = run.roster or {}
+    for i = 1, #roster do
+        local m = roster[i]
+        if m.guid then w.guids[m.guid] = m.name end
+        if m.name then w.names[m.name] = true end
+    end
+    K.deathWatch = w
+    ensureCleu()
+end
+
+-- outcome: "timed" | "depleted" | "abandoned". live may be nil (abandoned).
+local function closeRunRecord(run, outcome, timed, live)
+    run.open = nil
+    run.outcome = outcome
+    run.timed = timed
+    run.closed_at_ms = nowMs()
+    if outcome == "timed" or outcome == "depleted" then
+        run.completed_at_ms = K.state.completed_at_ms or run.closed_at_ms
+    end
+    if live then
+        run.time_remaining_s = live.time_remaining_s
+        if run.time_budget_s and live.time_remaining_s then
+            run.time_taken_s = run.time_budget_s - live.time_remaining_s
+        end
+        run.progress = {
+            enc_done   = live.encounters_done,
+            enc_req    = live.encounters_required,
+            trash_done = live.trash_done,
+            trash_req  = live.trash_required,
+            champ_done = live.champions_done,
+            champ_req  = live.champions_required,
+        }
+    end
+    K.deathWatch = nil
+    ALC.Core.Logger.debug(string.format(
+        "KeystoneScan run closed: %s +%s dungeon=%s deaths=%s",
+        outcome, tostring(run.key_level), tostring(run.dungeon_id),
+        tostring(run.deaths)))
+end
+
+-- Open a new run record from the live keystone read. `resumed` marks records
+-- created without having seen MYTHIC_PLUS_STARTED this login (DC recovery /
+-- addon enabled mid-run); their started_at is estimated from the timer.
+local function openRun(resumed, live)
+    if not shouldRecordRuns() then return nil end
+    live = live or K.readActiveKeystone()
+    local store = runStore()
+
+    -- A new run supersedes any record that was never closed (abandoned key
+    -- we never got a poll for).
+    local _, stale = findOpenRun(store)
+    if stale then closeRunRecord(stale, "abandoned") end
+
+    local now = nowMs()
+    local startedAt, estimated = now, nil
+    if resumed and live and live.time_budget_s and live.time_remaining_s then
+        local elapsed = live.time_budget_s - live.time_remaining_s
+        if elapsed > 0 then
+            startedAt = now - elapsed * 1000
+            estimated = true
+        end
+    end
+
+    local mapName
+    if type(_G.GetInstanceInfo) == "function" then
+        mapName = GetInstanceInfo()
+    end
+
+    local run = {
+        v             = C.KS_RUNS_SCHEMA,
+        addon_version = C.VERSION,
+        rid           = toBase36(math.floor(startedAt)) .. "-"
+                        .. tostring(live and live.dungeon_id or 0),
+        server        = ALC.Profile or "unknown",
+        realm         = (type(_G.GetRealmName) == "function" and GetRealmName()) or nil,
+        char          = rosterUnit("player"),
+
+        dungeon_id        = live and live.dungeon_id,
+        map_id            = live and live.map_id,
+        map_name          = mapName,
+        key_level         = live and live.level,
+        affixes           = live and live.active_affix_ids,
+        weekly_pool       = live and live.weekly_affix_pool,
+        reward_multiplier = live and live.reward_multiplier,
+        time_budget_s     = live and live.time_budget_s,
+
+        countdown_at_ms      = (not resumed) and K.state.countdown_at_ms or nil,
+        started_at_ms        = math.floor(startedAt),
+        started_at_estimated = estimated,
+        resumed              = resumed or nil,
+        resume_count         = 0,
+
+        roster    = captureRoster(),
+        roster_at = now,
+        deaths    = 0,
+        deaths_by = {},
+        open      = true,
+    }
+    store.runs[#store.runs + 1] = run
+    enforceCap(store)
+    armDeathWatch(run)
+    ALC.Core.Logger.debug(string.format(
+        "KeystoneScan run opened: +%s dungeon=%s roster=%d resumed=%s",
+        tostring(run.key_level), tostring(run.dungeon_id),
+        #run.roster, tostring(resumed or false)))
+    return run
+end
+
+------------------------------------------------------------------------------
+-- Resume-after-login. PLAYER_ENTERING_WORLD fires on login, /reload and every
+-- loading screen; the C_MythicPlus getters can populate late, so poll a few
+-- times instead of reading once. Outcomes per poll:
+--   * live key matches the open record        -> reattach (rearm death watch)
+--   * live key, no matching record            -> open a resumed record
+--   * live state is 100% complete             -> post-COMPLETE residue, ignore
+--     (the library keeps getters populated after MYTHIC_PLUS_COMPLETE)
+--   * final poll, no live key, record open    -> close it "abandoned"
+
+local RESUME_POLL_AT = { 5, 15, 30 }   -- seconds after PLAYER_ENTERING_WORLD
+local resumeFrame
+
+-- Returns true when the poll sequence is resolved and can stop early.
+local function onResumePoll(isFinal)
+    if not shouldRecordRuns() then return true end
+    local live = K.readActiveKeystone()
+    local store = runStore()
+    local _, open = findOpenRun(store)
+
+    if live and live.dungeon_id then
+        local finished =
+            live.encounters_done and live.encounters_required
+            and live.encounters_done >= live.encounters_required
+            and live.trash_done and live.trash_required
+            and live.trash_done >= live.trash_required
+        -- An open record with nil dungeon_id was created while the getters
+        -- were still lagging - treat it as ours and backfill from the live
+        -- read rather than abandoning it.
+        if open and (open.dungeon_id == nil
+                or (open.dungeon_id == live.dungeon_id
+                    and open.key_level == live.level)) then
+            if open.dungeon_id == nil then
+                open.dungeon_id    = live.dungeon_id
+                open.map_id        = live.map_id
+                open.key_level     = live.level
+                open.affixes       = live.active_affix_ids
+                open.weekly_pool   = live.weekly_affix_pool
+                open.time_budget_s = live.time_budget_s
+                if type(_G.GetInstanceInfo) == "function" then
+                    open.map_name = GetInstanceInfo()
+                end
+            end
+            open.resume_count = (open.resume_count or 0) + 1
+            open.last_resume_at_ms = nowMs()
+            if not open.roster or #open.roster == 0 then
+                open.roster = captureRoster()
+                open.roster_at = nowMs()
+            end
+            armDeathWatch(open)
+            ALC.Core.Logger.debug("KeystoneScan: reattached to open run after loading screen")
+            return true
+        end
+        if finished then return true end
+        openRun(true, live)
+        return true
+    end
+
+    if isFinal and open then
+        closeRunRecord(open, "abandoned")
+    end
+    return isFinal
+end
+
+function K.scheduleResumePolls()
+    if not isAvailable() then return end
+    local pending = {}
+    for i = 1, #RESUME_POLL_AT do pending[i] = RESUME_POLL_AT[i] end
+    if not resumeFrame then
+        resumeFrame = CreateFrame("Frame")
+    end
+    local elapsed = 0
+    resumeFrame:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + dt
+        if elapsed < pending[1] then return end
+        table.remove(pending, 1)
+        local isFinal = (#pending == 0)
+        local ok, resolved = pcall(onResumePoll, isFinal)
+        if isFinal or (ok and resolved) then
+            self:SetScript("OnUpdate", nil)
+        end
+    end)
+end
+
+------------------------------------------------------------------------------
 -- Envelope + transit (mirrors PetPipeline / Telemetry chunkers)
 
 local function buildChunk(sessionId, eventId, seq, total, b64)
@@ -399,6 +702,20 @@ local function onStarted()
     K.state.timer_state   = "running"
     K.state.started_at_ms = nowMs()
     publishEvent("start")
+
+    -- Durable record. If an open record already matches the live key this is
+    -- a duplicate STARTED (reload race) - keep the record, just rearm the
+    -- death watch; openRun() would wrongly close it as abandoned.
+    if shouldRecordRuns() then
+        local live = K.readActiveKeystone()
+        local _, open = findOpenRun(runStore())
+        if open and live and open.dungeon_id == live.dungeon_id
+                and open.key_level == live.level then
+            armDeathWatch(open)
+        else
+            openRun(false, live)
+        end
+    end
 end
 
 local function onComplete(a1)
@@ -407,6 +724,23 @@ local function onComplete(a1)
     K.state.completed_at_ms = nowMs()
     K.state.completed_timed = (a1 == true) or (a1 == 1) or false
     publishEvent("complete")
+
+    -- Close the durable record. The getters stay populated through COMPLETE,
+    -- so a live read here still yields final time/progress.
+    if shouldRecordRuns() then
+        local live = K.readActiveKeystone()
+        local outcome = K.state.completed_timed and "timed" or "depleted"
+        local _, open = findOpenRun(runStore())
+        if not open then
+            -- COMPLETE with no open record: the start was missed (addon
+            -- enabled mid-run and no resume poll fired). Synthesize from the
+            -- live read so the run is not lost.
+            open = openRun(true, live)
+        end
+        if open then
+            closeRunRecord(open, outcome, K.state.completed_timed, live)
+        end
+    end
 end
 
 function K.start()
@@ -427,6 +761,9 @@ function K.start()
     reg("MYTHIC_PLUS_COUNTDOWN_STARTED", function(_e, a1) onCountdown(a1) end)
     reg("MYTHIC_PLUS_STARTED",           function() onStarted() end)
     reg("MYTHIC_PLUS_COMPLETE",          function(_e, a1) onComplete(a1) end)
+    -- Resume/abandon detection for the durable run records: fires on login,
+    -- /reload and every loading screen (the polls sort out which it was).
+    reg("PLAYER_ENTERING_WORLD",         function() K.scheduleResumePolls() end)
 
     -- Toast fires only on confirmed landing: hook the relay's landed callback.
     local relay = ALC.Transport.SpellFailedRelay
@@ -479,5 +816,24 @@ function K.probe(logger)
         end
     else
         log("Captured events: NONE logged yet (no MYTHIC_PLUS_STARTED/COMPLETE has fired)")
+    end
+
+    -- Durable run records (what the Uploader reads from SavedVariables).
+    local store = _G.ALC_KeystoneRuns
+    local runs = store and store.runs
+    if runs and #runs > 0 then
+        log("Run records: " .. #runs .. " stored (newest last):")
+        local from = math.max(1, #runs - 2)
+        for i = from, #runs do
+            local r = runs[i]
+            log("  [" .. i .. "] +" .. tostring(r.key_level)
+                .. " " .. tostring(r.map_name or r.dungeon_id)
+                .. " outcome=" .. tostring(r.open and "OPEN" or r.outcome)
+                .. " deaths=" .. tostring(r.deaths)
+                .. " roster=" .. tostring(r.roster and #r.roster)
+                .. (r.resumed and " resumed" or ""))
+        end
+    else
+        log("Run records: none stored yet")
     end
 end
