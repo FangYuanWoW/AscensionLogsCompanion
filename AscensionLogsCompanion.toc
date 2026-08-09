@@ -55,6 +55,7 @@ Parser\EncounterDetector.lua
 UI\SettingsFrame.xml
 UI\SettingsFrame.lua
 UI\MinimapButton.lua
+UI\KeystoneDrain.lua
 UI\SlashCommand.lua
 
 Init.lua

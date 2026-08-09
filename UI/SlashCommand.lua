@@ -23,6 +23,9 @@ local function printHelp()
     L.info("  |cffffd200" .. s .. " settings|r     open panel on Settings tab")
     L.info("  |cffffd200" .. s .. " zones|r        open panel on Monitored Zones tab")
     L.info("  |cffffd200" .. s .. " status|r       show current state")
+    -- Advertised on purpose, unlike the other power-user commands: this is the
+    -- only way back to a dismissed keystone drain prompt.
+    L.info("  |cffffd200" .. s .. " drain|r        reopen the Mythic+ send prompt")
 end
 
 SlashCmdList["ALC"] = function(msg)
@@ -131,6 +134,23 @@ SlashCmdList["ALC"] = function(msg)
             ALC.Capture.KeystoneScan.probe(L.info)
         else
             L.warn("KeystoneScan module not loaded.")
+        end
+
+    -- Recovery, not diagnostics: a player who closes the drain prompt before
+    -- their keystone chunks land has no other way back to it, and the outcome
+    -- record is then stranded for good. Safe any time - it reports rather than
+    -- opens when there is nothing waiting.
+    elseif cmd == "drain" then
+        local drain = ALC.UI and ALC.UI.KeystoneDrain
+        local ks = ALC.Capture and ALC.Capture.KeystoneScan
+        local pending = (ks and ks.pendingOutcome and ks.pendingOutcome.count) or 0
+        if not drain then
+            L.warn("KeystoneDrain module not loaded.")
+        elseif pending > 0 then
+            drain.show()
+            L.info("Keystone drain prompt reopened (" .. pending .. " chunk(s) waiting).")
+        else
+            L.info("No keystone data waiting - nothing to send.")
         end
 
     elseif cmd == "manastorm" or cmd == "ms" then

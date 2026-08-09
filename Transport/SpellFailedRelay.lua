@@ -181,16 +181,31 @@ end
 -- Scope check: should the relay be active right now?
 local function shouldBeActive()
     if not _G.ALC_Config or not ALC_Config.hijack_enabled then return false end
+    -- Non-negotiable: with combat logging off there is no file to write to, so
+    -- no amount of arming can land anything.
     if not LoggingCombat or not LoggingCombat() then return false end
+
+    -- Keepalive window (0.67.1: now checked BEFORE the instance and combat
+    -- gates, not after). A keepalive is an explicit, time-boxed, caller-driven
+    -- flush request - today only the keystone outcome drain - and it has to
+    -- outrank both gates to be worth anything.
+    --
+    -- The single most common way the outcome record dies is the logger hearthing
+    -- out the moment the key ends. That drops them to instType "none", the relay
+    -- sleeps, and every subsequent failed cast is wasted. Honouring the window
+    -- outside instances is exactly the case the window exists for.
+    --
+    -- Bounded by KS_KEEPALIVE_S (45s) and only ever set by an explicit
+    -- requestKeepalive, so this cannot leave the relay awake in the open world:
+    -- the caller must keep asking, and the drain prompt only asks while it is
+    -- open with chunks still pending.
+    if H.keepaliveUntil and time() < H.keepaliveUntil then return true end
+
     local _, instType = IsInInstance()
     -- raid = 25-raid, party = 5-man dungeons. Allow both so dungeon
     -- testing produces CI lines too.
     if instType ~= "raid" and instType ~= "party" then return false end
     if UnitAffectingCombat("player") then return true end
-    -- Out of combat the relay normally sleeps. The one exception is a live
-    -- keepalive window (keystone-outcome flush): stay active so a post-combat
-    -- failed cast can still carry the priority chunk into the log.
-    if H.keepaliveUntil and time() < H.keepaliveUntil then return true end
     return false
 end
 

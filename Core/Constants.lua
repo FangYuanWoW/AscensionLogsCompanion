@@ -509,6 +509,16 @@ C.RELAY_FAIL_GLOBALS = {
     "SPELL_FAILED_MOVING",                   -- "Can't do that while moving"
     "SPELL_FAILED_CUSTOM_ERROR_32",          -- "Must be in Cat Form" (Ascension-specific slot)
 
+    -- Tier 3: added 0.67.1 for the ON-DEMAND drain prompt (UI/KeystoneDrain).
+    -- "Must have a %s equipped." is what `/cast Fishing` throws with no pole,
+    -- and that is the one failure a player can produce deliberately, instantly,
+    -- repeatably, with no target and no class dependency. Without this entry
+    -- the cast fails and CLEU fires but the engine's own string rides arg 12,
+    -- so the chunk is silently lost - the whole mechanism looks broken because
+    -- of one missing table row. Measured 2026-08-09: 0 of 13 fishing failures
+    -- carried a chunk before adding it, 7 of 7 after.
+    "SPELL_FAILED_EQUIPPED_ITEM_CLASS",
+
 }
 
 -- Chunking

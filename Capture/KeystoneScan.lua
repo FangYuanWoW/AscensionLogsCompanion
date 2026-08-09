@@ -829,8 +829,15 @@ K.pendingOutcome = nil   -- { set = {chunk=true,...}, count = N, timed = bool, d
 -- (CastSpellByName / SpellStopCasting / SpellStopTargeting), which taints from
 -- insecure code ("AddOn 'AscensionLogsCompanion' tainted the call of the secure
 -- function 'UNKNOWN()'"). Suppressing the message doesn't stop the taint
--- propagating to other secure actions. So the outcome relies on priority lane +
--- keepalive + ORGANIC failed casts; the toast fires only if/when it truly lands.
+-- propagating to other secure actions.
+--
+-- 0.67.1: that conclusion holds for PROGRAMMATIC casts only. A hardware click
+-- on a SecureActionButtonTemplate is NOT taint-blocked - the engine runs it
+-- through its own secure path - so the player can be given a button that
+-- manufactures the failed cast on demand. See UI/KeystoneDrain.lua. The
+-- automatic path here is unchanged (priority lane + keepalive + organic fails);
+-- the prompt is a backstop for the common case where a key ends with nobody
+-- casting and the logger hearths out.
 
 -- Minimal fading on-screen toast. Lazily built; reused across outcomes.
 local toastFrame
@@ -838,7 +845,11 @@ local function ensureToast()
     if toastFrame then return toastFrame end
     local f = CreateFrame("Frame", "ALC_KeystoneToast", UIParent)
     f:SetWidth(460); f:SetHeight(44)
-    f:SetPoint("TOP", UIParent, "TOP", 0, -200)
+    -- Sits ABOVE the drain prompt (UI/KeystoneDrain anchors at -160 and is 150
+    -- tall, so it occupies -160..-310). At the old -200 this toast rendered
+    -- inside the prompt. The two are related but distinct messages and the
+    -- toast can fire while the prompt is still open, so they must not collide.
+    f:SetPoint("TOP", UIParent, "TOP", 0, -100)
     f:SetFrameStrata("HIGH")
     local bg = f:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(f)
@@ -904,6 +915,9 @@ function K.onChunkLanded(chunk)
     if not po or not po.set[chunk] then return end
     po.set[chunk] = nil
     po.count = po.count - 1
+    -- Drive the drain prompt's progress off confirmed landings, never clicks.
+    local drain = ALC.UI and ALC.UI.KeystoneDrain
+    if drain and drain.onLanded then pcall(drain.onLanded) end
     if po.count > 0 then return end
 
     if ALC.Core.Metrics then ALC.Core.Metrics.inc("keystone_outcomes_landed") end
@@ -949,12 +963,34 @@ local function onStarted()
     end
 end
 
+-- Delay between MYTHIC_PLUS_COMPLETE and the drain prompt. Long enough that the
+-- prompt lands after the client's own key-complete UI rather than under it,
+-- short enough that it is still obviously part of finishing the key.
+local DRAIN_PROMPT_DELAY_S = 1.0
+
+local function scheduleDrainPrompt()
+    local drain = ALC.UI and ALC.UI.KeystoneDrain
+    if not (drain and drain.show) then return end
+    if _G.ALC_Config and ALC_Config.keystone_drain_prompt == false then return end
+    local f = CreateFrame("Frame")
+    local elapsed = 0
+    f:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + dt
+        if elapsed < DRAIN_PROMPT_DELAY_S then return end
+        self:SetScript("OnUpdate", nil)
+        -- show() no-ops when the outcome already landed organically, so a run
+        -- that drained itself never nags.
+        pcall(drain.show)
+    end)
+end
+
 local function onComplete(a1)
     -- a1 is the timed boolean: true = timed (success), false = depleted.
     K.state.timer_state     = "complete"
     K.state.completed_at_ms = nowMs()
     K.state.completed_timed = (a1 == true) or (a1 == 1) or false
     publishEvent("complete")
+    scheduleDrainPrompt()
 
     -- Close the durable record. The getters stay populated through COMPLETE,
     -- so a live read here still yields final time/progress.
