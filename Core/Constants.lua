@@ -19,6 +19,19 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.67.1 (keystone START record actually reaches the log): KeystoneScan
+-- queued the "start" record on the relay's NORMAL ring while only "complete"
+-- took the priority lane. SnapshotPipeline calls relay.clearRing() on every
+-- PLAYER_REGEN_DISABLED, and a run's first pull always lands before the first
+-- organic failed cast, so the start record was wiped every single time -
+-- server-side telemetry across all reports that carried KS chunks found 100%
+-- complete records and zero starts. Both lifecycle records now ride the
+-- priority lane, which is deliberately preserved across pull-start ring
+-- clears. No schema change (KS_SCHEMA_VERSION stays 1); the start record's
+-- fields were always populated, they just never arrived. This matters because
+-- the two records are lost to DIFFERENT failures - complete to a disconnect
+-- or hearth at key-end, start to the ring clear - so a run now has to lose
+-- both to end up with no keystone record at all.
 -- 0.66.0 (durable Mythic+ run records): KeystoneScan now writes a full
 -- per-run record into a new SavedVariablesPerCharacter store
 -- (ALC_KeystoneRuns) for EVERY party member running the addon, not just the
@@ -236,7 +249,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.67.0"
+C.VERSION = "0.67.1"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

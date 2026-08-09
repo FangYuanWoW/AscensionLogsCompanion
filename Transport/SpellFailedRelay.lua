@@ -157,7 +157,10 @@ end
 
 -- Priority enqueue (0.51.x): chunk jumps ahead of the normal ring. Used for
 -- the keystone outcome so it isn't stuck behind a full encounter's CI/TS
--- backlog when the player is about to leave the instance.
+-- backlog when the player is about to leave the instance, and (0.67.1) for
+-- the keystone START record, which the ring would lose outright: clearRing()
+-- fires on every pull, and a run's first pull always precedes the first
+-- organic failed cast. Point-in-time lifecycle records belong in this lane.
 function H.enqueueFront(chunk)
     H.priorityQueue[#H.priorityQueue + 1] = { chunk = chunk, pushed_at = time() }
     ALC.Core.Metrics.inc("chunks_queued_priority")

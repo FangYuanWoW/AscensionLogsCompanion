@@ -684,9 +684,12 @@ local function buildChunk(sessionId, eventId, seq, total, b64)
 end
 
 -- Returns the list of chunk strings emitted (so the caller can track which
--- chunks to watch for landed-evidence), or nil on failure. `priority` routes
--- through the relay's priority lane (drains ahead of the CI/PP/TS ring).
-local function enqueuePayload(body, sessionId, eventId, priority)
+-- chunks to watch for landed-evidence), or nil on failure. Both keystone
+-- lifecycle records go through the relay's priority lane, which drains ahead
+-- of the CI/PP/TS ring AND survives the pull-start ring clear (see the note
+-- at the call site). Older relay builds without enqueueFront fall back to the
+-- normal ring.
+local function enqueuePayload(body, sessionId, eventId)
     local compressed = ALC.Core.Serialize.serializeCI(body)
     if not compressed then
         ALC.Core.Logger.debug("KeystoneScan: serializer returned nil (libs not ready)")
@@ -705,7 +708,7 @@ local function enqueuePayload(body, sessionId, eventId, priority)
         local endIdx = math.min(startIdx + maxBody - 1, #b64)
         local chunk = buildChunk(sessionId, eventId, seq, total, b64:sub(startIdx, endIdx))
         chunks[seq] = chunk
-        if priority and relay.enqueueFront then
+        if relay.enqueueFront then
             relay.enqueueFront(chunk)
         else
             relay.enqueue(chunk)
@@ -755,10 +758,25 @@ local function publishEvent(eventType)
         body.completed_timed = K.state.completed_timed
     end
 
-    -- The outcome (complete) record jumps the queue via the priority lane so
-    -- it isn't stuck behind a full encounter's CI/TS backlog as the player
-    -- leaves the instance.
-    local chunks = enqueuePayload(body, sessionId, eventId, isComplete)
+    -- BOTH lifecycle records ride the priority lane, for different reasons.
+    --
+    -- complete: the player is about to leave the instance, so the chunk must
+    -- not sit behind a full encounter's CI/TS backlog.
+    --
+    -- start: the normal ring is WIPED by SnapshotPipeline's clearRing() on
+    -- every PLAYER_REGEN_DISABLED, so a ring-queued start record was deleted
+    -- by the run's first pull and could never ride an organic failed cast.
+    -- Measured server-side across every report that landed KS chunks: 100%
+    -- were complete records, not one start record ever arrived. The priority
+    -- lane is explicitly preserved across pull-start ring clears (that is why
+    -- it exists), so start now survives to the first failed cast.
+    --
+    -- The two records fail independently - complete is lost to a disconnect
+    -- or hearth at key-end, start to the ring clear - so carrying both is
+    -- what makes a run survivable. complete already carries started_at_ms, so
+    -- start adds nothing when both land; its whole value is being the run
+    -- record on runs where complete never makes it.
+    local chunks = enqueuePayload(body, sessionId, eventId)
     if chunks then
         if ALC.Core.Metrics then ALC.Core.Metrics.inc("keystone_events_queued") end
 
