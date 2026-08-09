@@ -236,7 +236,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.66.1"
+C.VERSION = "0.67.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -346,7 +346,11 @@ C.KS_KEEPALIVE_S = 45    -- relay stays active this long after MYTHIC_PLUS_COMPL
 -- SavedVariables file from disk and posts new records to the site. Append-only
 -- with a FIFO cap; the currently-open run is never evicted; dedup is
 -- server-side.
-C.KS_RUNS_SCHEMA = 1
+-- 0.67.0: run records gain boss_kills = { {at_ms, name, enc_done?}, ... } -
+-- one entry per BossRegistry-matched UNIT_DIED while the run is open, i.e.
+-- which bosses died and when. Additive field, schema 1 -> 2; older records
+-- simply lack it.
+C.KS_RUNS_SCHEMA = 2
 C.KS_RUNS_CAP    = 200
 
 -- Manastorm (MS) family: CoA-only scaling scenario. One "level_cleared" record

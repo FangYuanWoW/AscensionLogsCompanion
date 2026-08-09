@@ -288,6 +288,39 @@ end
 K.deathWatch = nil   -- { guids = {guid=name}, names = {name=true} }
 local cleuRegistered = false
 
+-- Boss kill times: a non-roster UNIT_DIED whose name resolves in the zone
+-- BossRegistry is a boss going down in this key. One entry per boss name (a
+-- boss dies once per run; a re-match is registry aliasing, not a new kill).
+-- at_ms rides the same time()-based clock as started_at_ms, so elapsed math
+-- downstream is timezone-proof. enc_done is the client's encounter counter
+-- read at the moment of death - it can lag one beat behind the kill (the
+-- getter may update after UNIT_DIED); informational only, name + time are
+-- the payload.
+local function recordBossKill(destName)
+    if not destName then return end
+    local BR = ALC.Zone and ALC.Zone.BossRegistry
+    local boss = BR and BR.match and BR.match(destName)
+    if not boss then return end
+    local _, run = findOpenRun(runStore())
+    if not run then return end
+    local kills = run.boss_kills
+    if kills then
+        for i = 1, #kills do
+            if kills[i].name == boss then return end
+        end
+    else
+        kills = {}
+        run.boss_kills = kills
+    end
+    local entry = { at_ms = nowMs(), name = boss }
+    local enc = callCMP("GetActiveKeystoneEncounters")
+    if type(enc) == "table" and enc.encountersCompleted ~= nil then
+        entry.enc_done = enc.encountersCompleted
+    end
+    kills[#kills + 1] = entry
+    ALC.Core.Logger.debug("KeystoneScan boss kill: " .. boss)
+end
+
 local function ensureCleu()
     if cleuRegistered then return end
     cleuRegistered = true
@@ -300,12 +333,15 @@ local function ensureCleu()
         if subEvent ~= "UNIT_DIED" then return end
         local who = destGUID and w.guids[destGUID]
         if not who and destName and w.names[destName] then who = destName end
-        if not who then return end
-        local _, run = findOpenRun(runStore())
-        if not run then return end
-        run.deaths = (run.deaths or 0) + 1
-        run.deaths_by = run.deaths_by or {}
-        run.deaths_by[who] = (run.deaths_by[who] or 0) + 1
+        if who then
+            local _, run = findOpenRun(runStore())
+            if not run then return end
+            run.deaths = (run.deaths or 0) + 1
+            run.deaths_by = run.deaths_by or {}
+            run.deaths_by[who] = (run.deaths_by[who] or 0) + 1
+            return
+        end
+        recordBossKill(destName)
     end)
 end
 
