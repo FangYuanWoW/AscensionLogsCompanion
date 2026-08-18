@@ -38,6 +38,18 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of eating the 3s have-talent-but-not-CA cutoff on every peer. No schema change
 -- (SCHEMA_VERSION stays 7): peer CI simply omits the specialization fields it
 -- cannot read.
+-- 0.67.2 also fixes ALCSync channel placement. WotLK has no MoveChannelUp/Down
+-- (Cataclysm API, nil here), so the old pushChannelDown() was always a silent
+-- no-op and a slow login could leave ALCSync as channel 1 - stealing /1 and
+-- topping the Channels list. The one rule the client follows is that a joining
+-- channel takes the LOWEST FREE slot, so placement is purely a question of join
+-- timing: VersionCheck now waits for the channel list to go quiet (5s, 45s cap)
+-- instead of using a fixed delay, and repairs a bad slot by leaving, parking a
+-- throwaway ALCPad channel in the hole it just freed, re-joining (which now
+-- lands past the last channel) and dropping the pad - capped at 2 attempts and
+-- skipped with no headroom for the pad. Also resolves the channel index fresh
+-- at send time: a stale cached index could post the ALCver handshake into
+-- whatever public channel had taken that slot.
 -- 0.67.1 (keystone START record actually reaches the log): KeystoneScan
 -- queued the "start" record on the relay's NORMAL ring while only "complete"
 -- took the priority lane. SnapshotPipeline calls relay.clearRing() on every
