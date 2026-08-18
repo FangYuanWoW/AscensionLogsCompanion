@@ -46,6 +46,7 @@ build of every player who was within ~28y of any logger during the fight.
 |---|---|
 | `/alc` | Open settings panel |
 | `/alc status` | Print current state and live capture stats |
+| `/alc cao off` | Stop reading other players' talent builds (Ascension only) |
 | Minimap button (click) | Toggle settings panel |
 | Minimap button (shift-drag) | Reposition around minimap |
 
@@ -61,6 +62,14 @@ stopping when you leave. No further interaction needed.
 - **Silent auto-logging** - skip the start/stop confirmation prompts. The
   addon starts logging silently on zone entry and never auto-stops; you
   control `/combatlog` yourself.
+- **Read other players' talent builds** (Ascension only) - the addon asks
+  the server for each raider's talent build so their talents and hero
+  build show up in your reports. Turn it off if inspecting people starts
+  crashing your client right after a game patch: that happens when a patch
+  retires a talent entry that characters' saved builds still point at, and
+  the client cannot cope with reading one. Also available as `/alc cao off`.
+  Everything else (gear, mystic enchants, pets) keeps working; only other
+  players' talents go missing while it's off.
 - **Debug mode** - verbose chat output for diagnostics.
 - **Monitored zones** - list of zones where auto-`/combatlog` triggers.
   Add the current zone with one click; remove anything you don't want

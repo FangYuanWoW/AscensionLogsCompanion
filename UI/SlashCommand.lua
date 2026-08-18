@@ -26,6 +26,11 @@ local function printHelp()
     -- Advertised on purpose, unlike the other power-user commands: this is the
     -- only way back to a dismissed keystone drain prompt.
     L.info("  |cffffd200" .. s .. " drain|r        reopen the Mythic+ send prompt")
+    -- Also advertised on purpose: someone whose client is crashing needs a
+    -- command they can be given in chat without opening the panel first.
+    if _G.C_CharacterAdvancement then
+        L.info("  |cffffd200" .. s .. " cao off|r      stop reading other players' talent builds")
+    end
 end
 
 SlashCmdList["ALC"] = function(msg)
@@ -65,6 +70,10 @@ SlashCmdList["ALC"] = function(msg)
         L.info(ALC.Core.Branding.titleGreen() .. " |cff888888v" .. ALC.Core.Constants.VERSION .. "|r")
         L.info("Current zone: |cffe8e8e8" .. zone .. "|r   /combatlog: " .. logging)
         L.info("Auto-log on zone entry: " .. autoOn)
+        if _G.C_CharacterAdvancement then
+            L.info("Reading other players' talent builds: "
+                .. ((cfg.cao_inspect_enabled ~= false) and "|cff00ff00On|r" or "|cffaaaaaaOff|r"))
+        end
         L.info(" ")
         L.info("|cffffd200Combatant info delivery|r")
         L.info("  Snapshots delivered: |cffe8e8e8" .. (c.chunks_flushed or 0) .. "|r"
@@ -120,6 +129,31 @@ SlashCmdList["ALC"] = function(msg)
         else
             L.info("Telemetry snapshots: " .. ((ALC_Config.telemetry_enabled and "on") or "off"))
             L.info("Usage: /alc telemetry on | off | now | probe")
+        end
+
+    elseif cmd == "cao" or cmd == "talents" then
+        -- Relief valve for patch-day Character Advancement breakage: a retired
+        -- entry id still referenced by a stored build takes the client down
+        -- when it parses the inspect response. Advertised in help because a
+        -- crashing player needs a one-liner they can be handed in chat.
+        _G.ALC_Config = _G.ALC_Config or {}
+        local sub = parts[2]
+        if not _G.C_CharacterAdvancement then
+            L.info("This server has no Character Advancement system; nothing to toggle.")
+        elseif sub == "on" then
+            ALC_Config.cao_inspect_enabled = true
+            L.info("Reading other players' talent builds: on")
+        elseif sub == "off" then
+            ALC_Config.cao_inspect_enabled = false
+            L.info("Reading other players' talent builds: off. Their talents and hero builds"
+                .. " will be missing from your reports until you turn it back on.")
+        else
+            L.info("Reading other players' talent builds: "
+                .. ((ALC_Config.cao_inspect_enabled ~= false) and "on" or "off"))
+            L.info("Usage: /alc cao on | off")
+        end
+        if ALC.UI.SettingsFrame and ALC.UI.SettingsFrame.refreshCheckboxes then
+            ALC.UI.SettingsFrame.refreshCheckboxes()
         end
 
     elseif cmd == "guardians" then

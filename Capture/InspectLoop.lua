@@ -80,6 +80,31 @@ local function rebuildUnitIndex()
     I.rosterGuids = roster
 end
 
+-- Peer Character Advancement inspects (Ascension family only), user-toggleable
+-- via ALC_Config.cao_inspect_enabled (Settings panel / "/alc cao off").
+--
+-- Asking for a peer's CA build makes the client resolve every entry id in that
+-- build against its local Character Advancement table. When a game patch retires
+-- an entry id that a character's STORED build still references, the client
+-- throws "CharacterAdvancementBuildEntry::UpdatePointers: entry <id> not found"
+-- while parsing the inspect response and can go down with it. That runs inside
+-- the client's own packet handler, before any addon code - the pcall around
+-- InspectUnit below is at the request, not the response, so there is nothing for
+-- us to catch and nothing to pre-validate. Not asking is the only lever, hence
+-- this toggle.
+--
+-- Off is a real capture loss (peers' talents + hero build), not a free win, so
+-- it defaults ON and is meant to be flipped only while a patch-day breakage is
+-- live. Everything else about a peer inspect - gear, mystic enchants, guild,
+-- race - is unaffected, and the logger's OWN build capture never routes through
+-- here (SnapshotPipeline calls InspectUnit("player") directly; your own build is
+-- already resolved client-side, so it carries no added risk).
+local function caoInspectEnabled()
+    if ALC.Core.Profile.isEpochFamily() then return false end
+    if _G.ALC_Config and ALC_Config.cao_inspect_enabled == false then return false end
+    return true
+end
+
 -- Transmog-visibility gate. When the user has C_Appearance.SetCanSeeAppearances
 -- disabled, GetInventoryItemLink already returns the real (non-vanity) item,
 -- so all the vanity-overlay capture work is pointless. Skip it to free up
@@ -369,7 +394,7 @@ local function finalizeInspect()
                     per_slot = ALC.Capture.MysticEnchantScan.readInspectedEnchantsPerSlot(unit),
                 }
             end
-            if ALC.Capture.CAOScan then
+            if caoInspectEnabled() and ALC.Capture.CAOScan then
                 ci.specialization = ci.specialization or {}
                 local inspected = ALC.Capture.CAOScan.readCAOForUnit(unit)
                 if inspected then
@@ -444,8 +469,13 @@ local function finalizeInspect()
         if ALC.Core.Profile.isEpochFamily() then
             missingTalents = (ci and ci.talents == nil) and true or false
         else
-            missingCAO    = (ci and ci.specialization
-                             and ci.specialization.active_spec_idx == nil)
+            -- Only a real miss when we actually asked. With peer CA inspects
+            -- off the field is absent by design, and counting it would burn a
+            -- partial-retry on every single peer forever.
+            if caoInspectEnabled() then
+                missingCAO = (ci and ci.specialization
+                              and ci.specialization.active_spec_idx == nil) and true or false
+            end
             missingMystic = (ci and (not ci.mystic_enchants
                                 or not ci.mystic_enchants.applied
                                 or #ci.mystic_enchants.applied == 0))
@@ -573,7 +603,12 @@ local function tryFinalize()
         return
     end
 
-    if (infl.gotCA and infl.gotMystic) or (GetTime() - infl.talentAt) >= 3.0 then
+    -- With peer CA inspects off, INSPECT_CHARACTER_ADVANCEMENT_RESULT can never
+    -- fire (we never sent the request), so treat that leg as satisfied. Without
+    -- this every peer would burn the full 3s cutoff instead of finalizing as
+    -- soon as talents + mystic land.
+    local caWaitDone = infl.gotCA or (not caoInspectEnabled())
+    if (caWaitDone and infl.gotMystic) or (GetTime() - infl.talentAt) >= 3.0 then
         finalizeInspect()
     end
 end
@@ -760,8 +795,10 @@ local function tick()
     -- enough for the lighter fields.
     NotifyInspect(unit)
     if not ALC.Core.Profile.isEpochFamily() then
-        -- Ascension-specific: trigger CAO inspect packet
-        if _G.C_CharacterAdvancement and type(_G.C_CharacterAdvancement.InspectUnit) == "function" then
+        -- Ascension-specific: trigger CAO inspect packet. Skipped entirely when
+        -- the user has turned peer CA inspects off (see caoInspectEnabled).
+        if caoInspectEnabled()
+           and _G.C_CharacterAdvancement and type(_G.C_CharacterAdvancement.InspectUnit) == "function" then
             pcall(_G.C_CharacterAdvancement.InspectUnit, unit)
         end
         -- Ascension-specific: trigger mystic enchant inspect packet

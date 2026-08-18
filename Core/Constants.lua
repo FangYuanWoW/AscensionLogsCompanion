@@ -19,6 +19,25 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.67.2 (opt-out for peer Character Advancement inspects): a new
+-- cao_inspect_enabled toggle (Settings panel + /alc cao on|off, default ON)
+-- stops the inspect rotation from calling C_CharacterAdvancement.InspectUnit on
+-- other players. Relief valve for the class of client-side breakage where a game
+-- patch retires a Character Advancement entry id that characters' stored builds
+-- still reference: the client resolves every entry of an inspected build against
+-- its local table, throws "CharacterAdvancementBuildEntry::UpdatePointers: entry
+-- <id> not found" and can go down with it. That happens inside the client's own
+-- inspect-response handler, before any addon code runs, so the pcall around the
+-- request cannot catch it and there is nothing addon-side to guard - not asking
+-- is the only lever. Turning it off costs peers' talents / hero build in reports;
+-- gear, mystic enchants, pets and telemetry are unaffected, and the logger's own
+-- build capture is untouched (your own build is already resolved client-side, so
+-- it carries no added risk). When off, tryFinalize no longer waits on
+-- INSPECT_CHARACTER_ADVANCEMENT_RESULT (it would never fire) and the missing-CAO
+-- partial-retry is suppressed, so the rotation keeps its normal cadence instead
+-- of eating the 3s have-talent-but-not-CA cutoff on every peer. No schema change
+-- (SCHEMA_VERSION stays 7): peer CI simply omits the specialization fields it
+-- cannot read.
 -- 0.67.1 (keystone START record actually reaches the log): KeystoneScan
 -- queued the "start" record on the relay's NORMAL ring while only "complete"
 -- took the priority lane. SnapshotPipeline calls relay.clearRing() on every
@@ -249,7 +268,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.67.1"
+C.VERSION = "0.67.2"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -610,6 +629,7 @@ C.DEFAULT_CONFIG = {
     manastorm_enabled    = true,  -- 0.61.0 local experiment: MS chunk emission, one level_cleared record per MANASTORM_LEVEL_COMPLETED (CoA only; no-op where C_Manastorm absent). Not yet consumed server-side.
     manastorm_keepalive  = true,  -- 0.61.0: keep the relay active for MS_KEEPALIVE_S after a level clear so an organic failed cast flushes the priority chunk through the between-levels lull.
     manastorm_toast      = true,  -- 0.61.0: show an on-screen toast when a level-cleared chunk is confirmed landed in the combat log.
+    cao_inspect_enabled  = true,  -- 0.67.2: request other players' Character Advancement build during inspect (Ascension family only; no-op where C_CharacterAdvancement is absent). Turn OFF as a relief valve when a client patch retires entry ids that stored builds still reference - the client throws "CharacterAdvancementBuildEntry::UpdatePointers: entry <id> not found" while parsing the inspect response and can crash. Cost of OFF: peers' talents / hero build are missing from reports until it is turned back on.
     -- 0.53.0 (NEW-ONLY, local/dev): CI/PP/TS ride [[ALC_F_v1_c2_...]] dict-deflated
     -- frames exclusively; there is no per-family legacy emit path anymore. This
     -- defaults ON and there is no /alc toggle. Editing this in SavedVariables to

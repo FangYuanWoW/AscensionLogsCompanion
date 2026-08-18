@@ -148,7 +148,7 @@ end
 function UI.create()
     if UI.frame then return UI.frame end
     local f = CreateFrame("Frame", "ALC_SettingsFrame", UIParent)
-    f:SetSize(580, 580)
+    f:SetSize(580, 660)
     f:SetPoint("CENTER")
     f:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -192,18 +192,18 @@ function UI.create()
     -- Anchored below the header divider, on the left side. 140 wide gives
     -- comfortable padding around tab labels.
     local sidebar = CreateFrame("Frame", nil, f)
-    sidebar:SetSize(140, 460)
+    sidebar:SetSize(140, 540)
     sidebar:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -86)
 
     -- Vertical divider between sidebar and content
     local vDivider = f:CreateTexture(nil, "OVERLAY")
-    vDivider:SetSize(1, 440)
+    vDivider:SetSize(1, 520)
     vDivider:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
     vDivider:SetTexture(0.4, 0.4, 0.4, 0.5)
 
     -- ---------- Settings page ----------
     local settingsPage = CreateFrame("Frame", nil, f)
-    settingsPage:SetSize(388, 460)
+    settingsPage:SetSize(388, 540)
     settingsPage:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 16, 0)
     UI.settingsPage = settingsPage
 
@@ -288,12 +288,31 @@ function UI.create()
             .. "|r")
     end
 
+    -- Ascension-family only: Epoch/Triumvirate have no C_CharacterAdvancement,
+    -- so the inspect loop never sends the request there and the toggle would be
+    -- a dead control.
+    if _G.C_CharacterAdvancement then
+        local caoCb = makeCheckbox(settingsPage, "Read other players' talent builds", 4, -358,
+            function() return cfg().cao_inspect_enabled ~= false end,
+            function(v) cfg().cao_inspect_enabled = v end)
+        local caoHelp = settingsPage:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        caoHelp:SetPoint("TOPLEFT", caoCb, "BOTTOMLEFT", 29, -2)
+        caoHelp:SetWidth(340)
+        caoHelp:SetJustifyH("LEFT")
+        caoHelp:SetText(
+            "|cff888888"
+            .. "• Turn this off if inspecting people crashes your client after a game patch.\n"
+            .. "• Trade-off: other players' talents and hero builds go missing from your reports."
+            .. "|r")
+    end
+
     -- ============== INTERFACE ==============
     -- Pushed below the 5-bullet transmog help block (~5 lines × ~14px)
-    -- so the section header doesn't overlap the last bullet.
-    sectionHeader("INTERFACE", -348)
+    -- and the CA-inspect toggle + its 2-bullet help, so the section header
+    -- doesn't overlap the last bullet.
+    sectionHeader("INTERFACE", -448)
 
-    makeCheckbox(settingsPage, "Show minimap icon", 4, -372,
+    makeCheckbox(settingsPage, "Show minimap icon", 4, -472,
         function()
             return not (_G.ALC_Config and ALC_Config.minimap_button
                         and ALC_Config.minimap_button.hide)
@@ -310,7 +329,7 @@ function UI.create()
             end
         end)
 
-    makeCheckbox(settingsPage, "Debug mode (verbose chat logging)", 4, -400,
+    makeCheckbox(settingsPage, "Debug mode (verbose chat logging)", 4, -500,
         function() return cfg().debug end,
         function(v) cfg().debug = v end)
 
@@ -328,7 +347,7 @@ function UI.create()
 
     -- ---------- Monitored Zones page ----------
     local zonesPage = CreateFrame("Frame", nil, f)
-    zonesPage:SetSize(388, 460)
+    zonesPage:SetSize(388, 540)
     zonesPage:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 16, 0)
     UI.zonesPage = zonesPage
 
