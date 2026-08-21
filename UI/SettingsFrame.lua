@@ -148,7 +148,7 @@ end
 function UI.create()
     if UI.frame then return UI.frame end
     local f = CreateFrame("Frame", "ALC_SettingsFrame", UIParent)
-    f:SetSize(580, 660)
+    f:SetSize(580, 704)
     f:SetPoint("CENTER")
     f:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -192,18 +192,18 @@ function UI.create()
     -- Anchored below the header divider, on the left side. 140 wide gives
     -- comfortable padding around tab labels.
     local sidebar = CreateFrame("Frame", nil, f)
-    sidebar:SetSize(140, 540)
+    sidebar:SetSize(140, 584)
     sidebar:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -86)
 
     -- Vertical divider between sidebar and content
     local vDivider = f:CreateTexture(nil, "OVERLAY")
-    vDivider:SetSize(1, 520)
+    vDivider:SetSize(1, 564)
     vDivider:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
     vDivider:SetTexture(0.4, 0.4, 0.4, 0.5)
 
     -- ---------- Settings page ----------
     local settingsPage = CreateFrame("Frame", nil, f)
-    settingsPage:SetSize(388, 540)
+    settingsPage:SetSize(388, 584)
     settingsPage:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 16, 0)
     UI.settingsPage = settingsPage
 
@@ -222,7 +222,7 @@ function UI.create()
     end
 
     -- Forward refs for dependent-toggle wiring (see refreshDependents).
-    local autoCb, silentCb, silentHelp, dungeonsCb, dungeonsHelp
+    local autoCb, silentCb, silentHelp, dungeonsCb, dungeonsHelp, raidsCb, raidsHelp
     local refreshDependents
 
     -- ============== LOGGING ==============
@@ -251,19 +251,44 @@ function UI.create()
 
     dungeonsCb = makeCheckbox(settingsPage, "Log 5-man dungeons", 4, -126,
         function() return cfg().log_dungeons ~= false end,
-        function(v) cfg().log_dungeons = v end)
+        function(v)
+            cfg().log_dungeons = v
+            -- Apply where the user is standing right now (see the raid toggle
+            -- below for the same wiring).
+            if ALC.Zone and ALC.Zone.ZoneMonitor and ALC.Zone.ZoneMonitor.check then
+                ALC.Zone.ZoneMonitor.check(false)
+            end
+        end)
     dungeonsHelp = settingsPage:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     dungeonsHelp:SetPoint("TOPLEFT", dungeonsCb, "BOTTOMLEFT", 29, -2)
     dungeonsHelp:SetWidth(340)
     dungeonsHelp:SetJustifyH("LEFT")
-    dungeonsHelp:SetText("|cff888888When off, auto-/combatlog only fires for raids. 5-man dungeons are skipped.|r")
+    dungeonsHelp:SetText("|cff888888When off, 5-man dungeons are skipped. Raids and world bosses still log.|r")
+
+    raidsCb = makeCheckbox(settingsPage, "Log raids and world bosses", 4, -170,
+        function() return cfg().log_raids ~= false end,
+        function(v)
+            cfg().log_raids = v
+            -- Re-run the zone check so the change takes effect where the user
+            -- is standing right now: turning it off stops a session ALC
+            -- started, turning it back on re-engages the current raid without
+            -- making them zone out and back in.
+            if ALC.Zone and ALC.Zone.ZoneMonitor and ALC.Zone.ZoneMonitor.check then
+                ALC.Zone.ZoneMonitor.check(false)
+            end
+        end)
+    raidsHelp = settingsPage:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    raidsHelp:SetPoint("TOPLEFT", raidsCb, "BOTTOMLEFT", 29, -2)
+    raidsHelp:SetWidth(340)
+    raidsHelp:SetJustifyH("LEFT")
+    raidsHelp:SetText("|cff888888When off, raid instances and world-boss zones are skipped. Dungeons and Mythic+ still log.|r")
 
     -- ============== CAPTURE QUALITY ==============
-    sectionHeader("CAPTURE QUALITY", -180)
+    sectionHeader("CAPTURE QUALITY", -224)
 
     if _G.C_Appearance and type(_G.C_Appearance.CanSeeAppearances) == "function"
        and type(_G.C_Appearance.SetCanSeeAppearances) == "function" then
-        local hideTmogCb = makeCheckbox(settingsPage, "Hide other players' transmog (cleaner captures)", 4, -204,
+        local hideTmogCb = makeCheckbox(settingsPage, "Hide other players' transmog (cleaner captures)", 4, -248,
             function()
                 local ok, transmog = pcall(_G.C_Appearance.CanSeeAppearances)
                 return ok and not transmog
@@ -292,7 +317,7 @@ function UI.create()
     -- so the inspect loop never sends the request there and the toggle would be
     -- a dead control.
     if _G.C_CharacterAdvancement then
-        local caoCb = makeCheckbox(settingsPage, "Read other players' talent builds", 4, -358,
+        local caoCb = makeCheckbox(settingsPage, "Read other players' talent builds", 4, -402,
             function() return cfg().cao_inspect_enabled ~= false end,
             function(v) cfg().cao_inspect_enabled = v end)
         local caoHelp = settingsPage:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -310,9 +335,9 @@ function UI.create()
     -- Pushed below the 5-bullet transmog help block (~5 lines × ~14px)
     -- and the CA-inspect toggle + its 2-bullet help, so the section header
     -- doesn't overlap the last bullet.
-    sectionHeader("INTERFACE", -448)
+    sectionHeader("INTERFACE", -492)
 
-    makeCheckbox(settingsPage, "Show minimap icon", 4, -472,
+    makeCheckbox(settingsPage, "Show minimap icon", 4, -516,
         function()
             return not (_G.ALC_Config and ALC_Config.minimap_button
                         and ALC_Config.minimap_button.hide)
@@ -329,16 +354,17 @@ function UI.create()
             end
         end)
 
-    makeCheckbox(settingsPage, "Debug mode (verbose chat logging)", 4, -500,
+    makeCheckbox(settingsPage, "Debug mode (verbose chat logging)", 4, -544,
         function() return cfg().debug end,
         function(v) cfg().debug = v end)
 
-    -- Wire dependents. silent + log-dungeons are no-ops when auto is off,
-    -- so grey them out + force-uncheck so the UI doesn't lie about state.
+    -- Wire dependents. silent + the two content gates are no-ops when auto is
+    -- off, so grey them out + force-uncheck so the UI doesn't lie about state.
     refreshDependents = function()
         local autoOn = cfg().auto_combatlog_on_raid and true or false
         setCheckboxEnabled(silentCb, silentHelp, autoOn)
         setCheckboxEnabled(dungeonsCb, dungeonsHelp, autoOn)
+        setCheckboxEnabled(raidsCb, raidsHelp, autoOn)
         if not autoOn then
             silentCb:SetChecked(false)
         end
@@ -347,7 +373,7 @@ function UI.create()
 
     -- ---------- Monitored Zones page ----------
     local zonesPage = CreateFrame("Frame", nil, f)
-    zonesPage:SetSize(388, 540)
+    zonesPage:SetSize(388, 584)
     zonesPage:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 16, 0)
     UI.zonesPage = zonesPage
 
@@ -377,7 +403,7 @@ function UI.create()
     zonesHelp:SetPoint("TOPLEFT", zoneRow, "BOTTOMLEFT", 0, -8)
     zonesHelp:SetWidth(380)
     zonesHelp:SetJustifyH("LEFT")
-    zonesHelp:SetText("|cff888888Entering one of these auto-starts /combatlog (when 'Auto /combatlog' is on).|r")
+    zonesHelp:SetText("|cff888888Entering one of these auto-starts /combatlog (when 'Auto /combatlog' is on). Removed zones stay removed across sessions.|r")
 
     -- ScrollFrame is 340 wide so the UIPanelScrollFrameTemplate's 22px
     -- scrollbar (auto-mounted on the right) fits inside the 388-wide
@@ -418,6 +444,24 @@ function UI.create()
     addBtn:SetPoint("LEFT", addEdit, "RIGHT", 6, 0)
     addBtn:SetText("Add")
     addBtn:SetScript("OnClick", commit)
+
+    -- Escape hatch for the tombstones: removals are permanent now, so there
+    -- has to be a way back to the shipped list without editing SavedVariables.
+    local restoreBtn = CreateFrame("Button", nil, zonesPage, "UIPanelButtonTemplate")
+    restoreBtn:SetSize(150, 22)
+    restoreBtn:SetPoint("TOPLEFT", addLabel, "BOTTOMLEFT", 0, -10)
+    restoreBtn:SetText("Restore Default Zones")
+    restoreBtn:SetScript("OnClick", function()
+        local restored = 0
+        for zone, on in pairs(ALC.Zone.DefaultZones.DEFAULTS) do
+            if cfg().monitored_zones[zone] ~= on then
+                cfg().monitored_zones[zone] = on
+                restored = restored + 1
+            end
+        end
+        UI.refreshZones()
+        ALC.Core.Logger.info("Restored " .. restored .. " default zone(s). Zones you added yourself were kept.")
+    end)
 
     -- ---------- Tab buttons (created last so we can wire selection) ----------
     -- Monitored Zones first (default active) since users open the panel
@@ -504,7 +548,12 @@ function UI.refreshZones()
         rm:SetPoint("RIGHT", row, "RIGHT", -2, 0)
         local zoneCaptured = zone
         rm:SetScript("OnClick", function()
-            cfg().monitored_zones[zoneCaptured] = nil
+            -- false, not nil. ZoneMonitor.start() re-seeds every DEFAULTS zone
+            -- whose key is nil, so deleting the key only removed the zone until
+            -- the next login - the "raid zones keep coming back by themselves"
+            -- report. An explicit false is a tombstone the seeding skips;
+            -- "Restore Default Zones" below is the way back.
+            cfg().monitored_zones[zoneCaptured] = false
             UI.refreshZones()
             ALC.Core.Logger.info("Stopped monitoring zone: " .. zoneCaptured)
         end)

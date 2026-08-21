@@ -12,6 +12,16 @@
 -- Coexistence: checks LoggingCombat() before calling /combatlog, so if
 -- another addon (FangYuanWoW/CombatLogs) has already enabled logging, we
 -- no-op rather than toggling it off.
+--
+-- 0.68.0: two per-content-type gates - log_dungeons and log_raids - decide
+-- whether a zone is allowed to auto-log at all. They are enforced at the very
+-- top of Z.check(), ahead of both the monitored-zone match and the
+-- lastLoggedZone dedupe, because silent mode never auto-stops: a session
+-- started in a dungeon would otherwise keep writing straight through the raid
+-- the user opted out of, and a gate behind the dedupe would never fire when a
+-- toggle is flipped while the player is already standing in the zone.
+-- Entering blocked content therefore STOPS an ALC-started session; a
+-- /combatlog the user turned on themselves is never touched.
 
 local ALC = _G.ALC
 local Z = {}
@@ -156,6 +166,70 @@ local function inManastorm()
     return (MS and MS.isInManastorm and MS.isInManastorm()) or false
 end
 
+-- Content classification for the per-content-type logging gates ("Log 5-man
+-- dungeons" / "Log raids and world bosses"). IsInInstance() is authoritative
+-- for anything instanced; outdoor world bosses and raid-event subzones report
+-- instanceType "none", so those fall back to the DefaultZones name table.
+-- Returns "raid", "dungeon", or nil for content we can't positively identify
+-- (a hand-added zone, open world) - unidentified content is never gated.
+local function contentKind(zoneName)
+    local _, instanceType = IsInInstance()
+    if instanceType == "raid"  then return "raid" end
+    if instanceType == "party" then return "dungeon" end
+    local outdoor = ALC.Zone.DefaultZones and ALC.Zone.DefaultZones.OUTDOOR_RAID_ZONES
+    if zoneName and outdoor and outdoor[zoneName:lower()] then return "raid" end
+    return nil
+end
+
+-- Returns the content kind when the user has switched logging OFF for it,
+-- nil otherwise. Missing config keys read as ON, matching the settings panel's
+-- getters, so a config saved before either toggle existed keeps logging.
+-- Manastorm is never gated: it is a scaling scenario running inside recycled
+-- dungeon maps, and it has its own opt-out (manastorm_enabled).
+local function blockedContentKind(zoneName)
+    if inManastorm() then return nil end
+    local c = _G.ALC_Config or {}
+    local kind = contentKind(zoneName)
+    if kind == "dungeon" and c.log_dungeons == false then return "dungeon" end
+    if kind == "raid"    and c.log_raids    == false then return "raid" end
+    return nil
+end
+
+local CONTENT_LABEL = {
+    raid    = "a raid or world boss",
+    dungeon = "a 5-man dungeon",
+}
+
+-- Enforce the content gates for the zone we're standing in. Returns true when
+-- the zone is blocked, in which case nothing else in Z.check should run.
+--
+-- Stops an in-flight session rather than only declining to start one: silent
+-- mode never auto-stops, so a session started in a dungeon would otherwise
+-- keep writing straight through the raid the user opted out of. Only a session
+-- WE started is stopped - a /combatlog the user turned on themselves is their
+-- own call and is left alone.
+local function enforceContentGate(zoneName)
+    local blocked = blockedContentKind(zoneName)
+    if not blocked then return false end
+
+    local label = CONTENT_LABEL[blocked]
+    if Z.startedByUs and LoggingCombat() then
+        SlashCmdList["COMBATLOG"]("")
+        ALC.Core.Logger.info("Combat logging stopped: " .. zoneName .. " is "
+            .. label .. ", and logging there is turned off.")
+    else
+        ALC.Core.Logger.debug("Skipping auto-/combatlog: " .. zoneName .. " is "
+            .. label .. ", and logging there is turned off.")
+    end
+    -- Full reset (rather than tagging this zone as the last logged one): with
+    -- the zone tag clear, turning the toggle back on re-engages this same zone
+    -- through Z.check() without the user having to zone out and back in.
+    Z.startedByUs = false
+    Z.lastLoggedZone = nil
+    Z.popupShownForZone = nil
+    return true
+end
+
 local function startLogging(zoneName, showPopup)
     if LoggingCombat() then
         -- Someone else already started it (or user kept it on across zones).
@@ -171,16 +245,6 @@ local function startLogging(zoneName, showPopup)
         return
     end
     if not ALC_Config.auto_combatlog_on_raid then return end
-
-    -- Dungeon gate: when log_dungeons is off, only raid instances trigger
-    -- auto-logging. 5-man dungeons (instanceType="party") are skipped.
-    -- World-boss subzones aren't instanced (IsInInstance returns "none")
-    -- so they continue to trigger as long as the zone is in the list.
-    local _, instanceType = IsInInstance()
-    if instanceType == "party" and not ALC_Config.log_dungeons and not inManastorm() then
-        ALC.Core.Logger.debug("Skipping auto-/combatlog: " .. zoneName .. " is a 5-man and 'Log dungeons' is off")
-        return
-    end
 
     -- Activate /combatlog
     SlashCmdList["COMBATLOG"]("")
@@ -242,6 +306,14 @@ function Z.check(isMainZoneChange)
     -- entry and never fire the "left monitored zone" stop prompt as you warp
     -- between levels (each level reports its boss's home-dungeon name).
     if inManastorm() then zone = "The Manastorm" end
+
+    -- Content gate first, ahead of the lastLoggedZone dedupe below. Flipping
+    -- "Log raids and world bosses" off calls straight in here while the player
+    -- is standing in the raid, and at that point lastLoggedZone already equals
+    -- the current zone - a gate behind the dedupe would never fire and the
+    -- session would keep running until the next zone change.
+    if enforceContentGate(zone) then return end
+
     local monitored = zoneIsMonitored(zone) or inManastorm()
     local silent = _G.ALC_Config and ALC_Config.silent_auto_logging
 

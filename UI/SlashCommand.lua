@@ -69,7 +69,9 @@ SlashCmdList["ALC"] = function(msg)
 
         L.info(ALC.Core.Branding.titleGreen() .. " |cff888888v" .. ALC.Core.Constants.VERSION .. "|r")
         L.info("Current zone: |cffe8e8e8" .. zone .. "|r   /combatlog: " .. logging)
-        L.info("Auto-log on zone entry: " .. autoOn)
+        L.info("Auto-log on zone entry: " .. autoOn
+            .. "   Raids: " .. ((cfg.log_raids ~= false) and "|cff00ff00On|r" or "|cffaaaaaaOff|r")
+            .. "   Dungeons: " .. ((cfg.log_dungeons ~= false) and "|cff00ff00On|r" or "|cffaaaaaaOff|r"))
         if _G.C_CharacterAdvancement then
             L.info("Reading other players' talent builds: "
                 .. ((cfg.cao_inspect_enabled ~= false) and "|cff00ff00On|r" or "|cffaaaaaaOff|r"))
@@ -218,15 +220,38 @@ SlashCmdList["ALC"] = function(msg)
             ALC_Config.monitored_zones[zone] = true
             L.info("Added zone: " .. zone)
         elseif sub == "remove" then
-            local zone = table.concat(parts, " ", 3)
-            ALC_Config.monitored_zones[zone] = nil
-            L.info("Removed zone: " .. zone)
+            -- `parts` comes from msg:lower(), so the typed name never matches a
+            -- properly-cased key exactly. Resolve case-insensitively against the
+            -- keys actually present, then tombstone with false rather than nil:
+            -- ZoneMonitor.start() re-seeds every DEFAULTS zone whose key is nil,
+            -- so a deleted key came straight back on the next login.
+            local typed = table.concat(parts, " ", 3)
+            local removed = nil
+            for zone in pairs(ALC_Config.monitored_zones) do
+                if zone:lower() == typed then removed = zone; break end
+            end
+            removed = removed or typed
+            ALC_Config.monitored_zones[removed] = false
+            L.info("Removed zone: " .. removed .. " |cff888888(stays removed; /"
+                .. ALC.Core.Branding.slash() .. " zone reset restores defaults)|r")
+        elseif sub == "reset" then
+            local restored = 0
+            for zone, on in pairs(ALC.Zone.DefaultZones.DEFAULTS) do
+                if ALC_Config.monitored_zones[zone] ~= on then
+                    ALC_Config.monitored_zones[zone] = on
+                    restored = restored + 1
+                end
+            end
+            L.info("Restored " .. restored .. " default zone(s). Zones you added yourself were kept.")
         elseif sub == "list" then
             for zone, enabled in pairs(ALC_Config.monitored_zones) do
                 if enabled then L.info("  - " .. zone) end
             end
         else
-            L.info("Usage: /alc zone add|remove|list [name]")
+            L.info("Usage: /alc zone add|remove|list|reset [name]")
+        end
+        if ALC.UI.SettingsFrame and ALC.UI.SettingsFrame.refreshZones then
+            ALC.UI.SettingsFrame.refreshZones()
         end
 
     elseif cmd == "clear-cache" then

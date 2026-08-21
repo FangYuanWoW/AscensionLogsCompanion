@@ -62,6 +62,15 @@ stopping when you leave. No further interaction needed.
 - **Silent auto-logging** - skip the start/stop confirmation prompts. The
   addon starts logging silently on zone entry and never auto-stops; you
   control `/combatlog` yourself.
+- **Log 5-man dungeons** - when off, entering a 5-man no longer auto-starts
+  `/combatlog`. Raids and world bosses still log.
+- **Log raids and world bosses** - when off, entering a raid instance or a
+  world-boss zone no longer auto-starts `/combatlog`. Dungeons and Mythic+
+  still log. Use this if you only want your 5-man and key runs on the site
+  and would rather keep the frame budget for raid nights, instead of
+  disabling the addon by hand every time you zone in. If logging is already
+  running when you enter, the addon stops it - but only if the addon started
+  it; a `/combatlog` you turned on yourself is left alone.
 - **Read other players' talent builds** (Ascension only) - the addon asks
   the server for each raider's talent build so their talents and hero
   build show up in your reports. Turn it off if inspecting people starts
@@ -73,8 +82,10 @@ stopping when you leave. No further interaction needed.
 - **Debug mode** - verbose chat output for diagnostics.
 - **Monitored zones** - list of zones where auto-`/combatlog` triggers.
   Add the current zone with one click; remove anything you don't want
-  with the X next to its name. Defaults cover all classic raids, world
-  bosses, and the major 5-man dungeons.
+  with the X next to its name. Removals are permanent: a zone you remove
+  stays removed across logins, and **Restore Default Zones** (or
+  `/alc zone reset`) is the way back to the shipped list. Defaults cover
+  all classic raids, world bosses, and the major 5-man dungeons.
 
 ## Default monitored zones
 

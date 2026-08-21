@@ -19,6 +19,23 @@ C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
 -- Version
+-- 0.68.0 (per-content-type logging gates): a new log_raids toggle (Settings
+-- panel, default ON) is the raid-side twin of log_dungeons - when off, entering
+-- a raid or a world-boss zone no longer auto-starts /combatlog, so a player who
+-- only wants their Mythic+ and 5-man runs logged can stop hand-disabling the
+-- addon before every raid night. Both gates now run through one classifier in
+-- ZoneMonitor: IsInInstance() decides indoor content ("raid" / "party"), and
+-- outdoor world bosses and raid-event subzones (which report instanceType
+-- "none") are matched by name against DefaultZones.OUTDOOR_RAID_ZONES. Content
+-- the addon cannot positively identify is never gated. Two behavior changes
+-- ride along: the gate now runs BEFORE the already-logging claim, so a session
+-- carried in from other content (silent mode never auto-stops) is stopped on
+-- entering blocked content instead of quietly logging through it - only a
+-- session ALC itself started, never a manual /combatlog; and removing a zone
+-- from the Monitored Zones list now records it as false rather than deleting
+-- the key, so Z.start()'s defaults seeding stops resurrecting hand-removed
+-- zones on the next login (the long-standing "the raid zones keep coming back"
+-- report). "Restore Default Zones" on the zones page clears those tombstones.
 -- 0.67.2 (opt-out for peer Character Advancement inspects): a new
 -- cao_inspect_enabled toggle (Settings panel + /alc cao on|off, default ON)
 -- stops the inspect rotation from calling C_CharacterAdvancement.InspectUnit on
@@ -280,7 +297,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.67.2"
+C.VERSION = "0.68.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -632,7 +649,8 @@ C.DEFAULT_CONFIG = {
     hijack_enabled = true,
     is_logger = true,
     silent_auto_logging = false,  -- skip both start + stop popups; logging stays on across zone changes until user manually toggles
-    log_dungeons = true,          -- when off, auto-/combatlog only fires for raids (instanceType=="raid"), skipping 5-man dungeons
+    log_dungeons = true,          -- when off, auto-/combatlog skips 5-man dungeons (instanceType=="party")
+    log_raids    = true,          -- 0.68.0: when off, auto-/combatlog skips raids (instanceType=="raid") AND outdoor world-boss / raid-event zones (DefaultZones.OUTDOOR_RAID_ZONES). Both gates also stop a carried-in ALC-started session on entry, so silent mode can't log through blocked content.
     pet_tracking_enabled = true,  -- 0.42.0: PP chunk emission for {owner, pet} GUID pairs from controlled-pet unit slots
     telemetry_enabled    = true,  -- 0.42.1 local experiment: TS chunk emission for periodic encounter telemetry (positions, vitals, hostile NPC ledger). Not yet consumed server-side.
     keystone_enabled     = true,  -- 0.51.x local experiment: KS chunk emission for Mythic+ keystone start/complete lifecycle events (Ascension only; no-op on Epoch). Not yet consumed server-side.

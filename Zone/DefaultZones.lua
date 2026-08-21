@@ -172,3 +172,41 @@ D.DEFAULTS = {
     -- Re-run the client delta on launch day; if S10 ships a realm-override map
     -- pack with new instance names, add them below as verbatim Map.dbc strings.
 }
+
+-- Outdoor raid content, keyed lowercase for case-insensitive lookup.
+--
+-- The "Log raids and world bosses" gate classifies indoor content off
+-- IsInInstance(), which is authoritative: a raid map reports instanceType
+-- "raid" and a 5-man reports "party". Outdoor world bosses and the raid-event
+-- subzones (AQ gates, the Dream boughs, Kazzak's Tainted Scar, ...) are not
+-- instanced at all - IsInInstance() returns "none" there - so the gate has no
+-- signal to read and falls back to this name table.
+--
+-- Only the zones listed here are treated as raid content by name. A zone the
+-- user added by hand that isn't in this table stays ungated: we block what we
+-- can positively identify, never what we merely fail to recognize.
+--
+-- Keep in sync with the "World bosses + outdoor subzones", "AQ gate subzones",
+-- "Dream bosses subzones" and "Other raid-event subzones" sections of DEFAULTS
+-- above. Indoor raid maps deliberately do NOT belong here - instanceType
+-- already covers them, on every tenant, including maps this file never lists.
+D.OUTDOOR_RAID_ZONES = {}
+do
+    local outdoor = {
+        -- World bosses
+        "Azuregos (PvE)", "Lord Kazzak (PvE)", "Kazzak (PvE)", "Emeriss (PvE)",
+        "Lethon (PvE)", "Taerar (PvE)", "Ysondre (PvE)", "Soggoth (PvE)",
+        "Setis (PvE)", "Snowgrave (PvE)", "Atal'zull (PvE)",
+        "Kaldros Depthbreaker (PvE)",
+        -- AQ gate subzones
+        "The Scarab Wall", "The Scarab Dais", "Master's Gastric Pit",
+        -- Dream boss subzones
+        "Bough Shadow", "Dream Bough", "Twilight Grove", "Seradane",
+        -- Other raid-event subzones
+        "The Master's Glaive", "Throne of the Doom Lord", "The Tainted Scar",
+        "Zul'Mashar", "Snowgrave's Cavern",
+    }
+    for _, name in ipairs(outdoor) do
+        D.OUTDOOR_RAID_ZONES[name:lower()] = true
+    end
+end
