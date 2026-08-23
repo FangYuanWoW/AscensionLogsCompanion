@@ -438,6 +438,14 @@ C.INSPECT_MIN_INTERVAL_S = 1.0  -- empirically validated 2026-04-25 on Bronzebea
 -- so 0.5s leaves comfortable margin and roughly halves cold-cycle time vs
 -- Ascension's 1.0s floor.
 C.INSPECT_MIN_INTERVAL_S_BY_PROFILE = {
+    -- Frostmourne: MEASURED 2026-08-23 over three live inspects -
+    -- INSPECT_READY at a steady 169-180ms, but the talent payload lands at a
+    -- VARIABLE 489-989ms, and gear at INSPECT_READY was seen empty (0/19) on
+    -- one of the three despite 16-17/19 on the others. The loop is
+    -- event-driven (INSPECT_TALENT_READY), so this floor only paces how often
+    -- a new inspect may START; 0.5s sits comfortably under the observed
+    -- completion time. Same value as the rest of the Epoch family.
+    frostmourne = 0.5,
     ascension   = 1.0,
     -- Dawnrise/Darkmoon are the same Ascension client; inherit the validated
     -- 1.0s Ascension inspect floor.

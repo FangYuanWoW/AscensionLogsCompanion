@@ -105,6 +105,28 @@ function G.readGear(unit)
                     end
                 end
 
+                -- Frostmourne: AUTHORITATIVE transmog read. The divergence
+                -- heuristic above infers an overlay from link-vs-id mismatch;
+                -- this client exposes the real thing, so prefer it and let it
+                -- overwrite the inferred value.
+                --
+                -- Measured 2026-08-23: GetInventoryItemTransmog(unit, slot)
+                -- returns 2 values, the first being 0 when the slot carries no
+                -- transmog, and it works on INSPECTED units too. The slot-only
+                -- call form returns nil and is the wrong shape.
+                --
+                -- Deliberately does NOT clear a previously-inferred
+                -- vanity_item_id when this returns 0: a 0 means "no transmog on
+                -- this slot", which is exactly when the divergence branch above
+                -- would not have set anything either.
+                if ALC.Core.Profile.hasNativeTransmog() then
+                    local ok, transmogId = pcall(GetInventoryItemTransmog, unit, slot)
+                    if ok and type(transmogId) == "number"
+                       and transmogId > 0 and transmogId ~= parsed.item_id then
+                        entry.vanity_item_id = transmogId
+                    end
+                end
+
                 -- Ascension-family only: vanity-detection flag via
                 -- C_VanityCollection. Independent of divergence — catches the
                 -- "fully-poisoned" peer state where both link and

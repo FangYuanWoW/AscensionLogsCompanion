@@ -38,6 +38,7 @@ P.DAWNRISE    = "dawnrise"      -- Season 10 classless Freepick realm (Ascension
 P.DARKMOON    = "darkmoon"      -- Season 10 classless Wildcard realm (Ascension-family capture)
 P.EPOCH       = "epoch"
 P.TRIUMVIRATE = "triumvirate"
+P.FROSTMOURNE = "frostmourne"   -- Whitemane "Frostmourne Rebuffed", stock 3.3.5a build 12340
 P.UNKNOWN     = "unknown"
 
 -- Exact-match realm names. The Bronzebeard realm reports as the combined
@@ -82,11 +83,40 @@ local REALMS = {
     -- Realm string confirmed 2026-06-15 via clean probe (WTF account realm
     -- folder = "Triumvirate"; single word, no GetRealmName() sanitization).
     ["Triumvirate"]                   = P.TRIUMVIRATE,
+    -- Frostmourne (Whitemane / "Frostmourne Rebuffed"). Stock WotLK 3.3.5a
+    -- build 12340 with a large custom content patch injected via rebuffed.dll.
+    -- Realm string VERIFIED in-game 2026-08-23: the PTR realm reports
+    -- "Frostmourne PTR" (WTF account folder matches). The live realm is
+    -- expected to report plain "Frostmourne"; both are listed, and P.detect's
+    -- ^Frostmourne prefix fallback covers any other suffix they add.
+    ["Frostmourne"]                   = P.FROSTMOURNE,
+    ["Frostmourne PTR"]               = P.FROSTMOURNE,
 }
 
 -- Global probe: Ascension-only namespaces verified absent on Epoch via the
 -- 2026-04-28 ALC_Epoch_Probe run (see addons/alc-multi-server-design.md
 -- Phase 1 §A). Presence => Ascension; absence + unmatched realm => unknown.
+-- Frostmourne global probe. Belt-and-braces behind the realm-name match, for
+-- shards/renames that report an unmatched realm string.
+--
+-- MEASURED in-game 2026-08-23 (FLC_Probe), not inferred from the client binary:
+-- these are real Lua exports of the injected client extension, and every
+-- Ascension-only marker (C_CharacterAdvancement / C_MysticEnchant /
+-- MysticEnchantUtil / AscensionCharacterFrame / C_Player) is ABSENT here, so
+-- there is no cross-family misfire risk.
+--
+-- NOTE: an earlier design keyed this on a "Cache_Frostmourne" global. That
+-- string exists inside rebuffed.dll but is NOT exported to Lua - probing it
+-- would have silently never matched. Use only verified exports.
+local function probeFrostmourneGlobals()
+    if type(_G.GetInventoryItemTransmog) ~= "function" then return false end
+    if type(_G.UnitTokenFromGUID) ~= "function" then return false end
+    -- Must NOT look like an Ascension client.
+    if type(_G.C_CharacterAdvancement) == "table" then return false end
+    if type(_G.C_MysticEnchant) == "table" then return false end
+    return true
+end
+
 local function probeAscensionGlobals()
     if type(_G.CAO_Known) == "table" then return true end
     if type(_G.AscensionUI) == "table"
@@ -105,7 +135,8 @@ function P.detect()
     -- 1. Manual override
     local override = ALC_Config.server_profile_override
     if override == P.ASCENSION or override == P.EPOCH
-       or override == P.TRIUMVIRATE or override == P.UNKNOWN then
+       or override == P.TRIUMVIRATE or override == P.FROSTMOURNE
+       or override == P.UNKNOWN then
         ALC.Profile = override
         ALC_Config.server_profile = override
         return override
@@ -122,7 +153,8 @@ function P.detect()
         local matched = REALMS[realm]
         if not matched then
             if realm:find("^Dawnrise") then matched = P.DAWNRISE
-            elseif realm:find("^Darkmoon") then matched = P.DARKMOON end
+            elseif realm:find("^Darkmoon") then matched = P.DARKMOON
+            elseif realm:find("^Frostmourne") then matched = P.FROSTMOURNE end
         end
         if matched then
             ALC.Profile = matched
@@ -131,7 +163,15 @@ function P.detect()
         end
     end
 
-    -- 3. Global probe
+    -- 3. Global probe. Frostmourne first: its probe explicitly rejects clients
+    --    carrying Ascension namespaces, so it cannot steal an Ascension client,
+    --    while the Ascension probe knows nothing about Frostmourne.
+    if probeFrostmourneGlobals() then
+        ALC.Profile = P.FROSTMOURNE
+        ALC_Config.server_profile = P.FROSTMOURNE
+        return P.FROSTMOURNE
+    end
+
     if probeAscensionGlobals() then
         ALC.Profile = P.ASCENSION
         ALC_Config.server_profile = P.ASCENSION
@@ -148,6 +188,7 @@ end
 function P.isAscension()   return ALC.Profile == P.ASCENSION end
 function P.isEpoch()       return ALC.Profile == P.EPOCH end
 function P.isTriumvirate() return ALC.Profile == P.TRIUMVIRATE end
+function P.isFrostmourne() return ALC.Profile == P.FROSTMOURNE end
 
 -- Ascension-family = servers that share Ascension's FULL capture path (CAO /
 -- MysticEnchant / transmog / Mythic+ / hero builds): Bronzebeard, CoA
@@ -178,7 +219,26 @@ end
 -- routing. Capture-side branches should gate on this, not on isEpoch(), so a
 -- new Epoch-family tenant routes correctly without touching every call site.
 function P.isEpochFamily()
-    return ALC.Profile == P.EPOCH or ALC.Profile == P.TRIUMVIRATE
+    return ALC.Profile == P.EPOCH
+        or ALC.Profile == P.TRIUMVIRATE
+        or ALC.Profile == P.FROSTMOURNE
+end
+
+-- Frostmourne is Epoch-family for the CAPTURE path (dual-spec talent reader, no
+-- CAO / MysticEnchant / M+) but - unlike Epoch and Triumvirate - it DOES have a
+-- transmog system, exposed as a first-class API rather than inferred from
+-- link-vs-id divergence. Measured 2026-08-23:
+--
+--   GetInventoryItemTransmog(unit, slot) -> 2 values, first is 0 when the slot
+--   has no transmog. Works on INSPECTED units, not just "player". The
+--   slot-only call form returns nil and is wrong.
+--
+-- Anything that wants the authoritative overlay should gate on THIS, not on
+-- isAscensionFamily() (which would drag in CAO/vanity machinery Frostmourne
+-- has none of) and not on isEpochFamily() (which assumes no transmog at all).
+function P.hasNativeTransmog()
+    return ALC.Profile == P.FROSTMOURNE
+       and type(_G.GetInventoryItemTransmog) == "function"
 end
 
 -- Returns the per-server inspect throttle floor with a safe fallback.

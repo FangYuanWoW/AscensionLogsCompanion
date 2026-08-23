@@ -109,6 +109,12 @@ D.DEFAULTS = {
     ["Trial of the Crusader"]                 = true,
     ["Icecrown Citadel"]                      = true,
     ["The Ruby Sanctum"]                      = true,
+    -- Frostmourne (Whitemane) custom raid map. Its client Map.dbc carries the
+    -- stock instance roster plus exactly ONE addition: map 730 "Ruins of
+    -- Karazhan", which reuses map 532 Karazhan's directory. Listed VERBATIM as
+    -- the client reports it. Inert on every other tenant - the zone simply
+    -- never matches - which is how the rest of this table already works.
+    ["Ruins of Karazhan"]                     = true,
 
     -- Vanilla 5-man stock-name variants (GetInstanceInfo differs from above)
     ["Deadmines"]                             = true,

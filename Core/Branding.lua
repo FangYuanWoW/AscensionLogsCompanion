@@ -7,8 +7,9 @@
 -- module handles everything the running client shows in-game.
 --
 -- Bronzebeard, Epoch, and CoA all ship under the "Ascension Logs" umbrella
--- brand, so only "ascension" and "triumvirate" have entries here; every other
--- profile (epoch, CoA-as-ascension, unknown) falls back to the ascension brand.
+-- brand, so only "ascension", "triumvirate" and "frostmourne" have entries
+-- here; every other profile (epoch, CoA-as-ascension, unknown) falls back to
+-- the ascension brand.
 --
 -- All lookups are LAZY (resolved at call time) because ALC.Profile is not set
 -- until Profile.detect() runs inside Init.boot(). Every caller here fires after
@@ -35,6 +36,14 @@ local BRANDS = {
         accent      = "4ec3ff",  -- shares the Ascension blue (owner keeps the blue brand color)
         domain      = "triumlogs.gg",
         releasesUrl = "https://github.com/FangYuanWoW/triumvirate-logs-companion/releases",
+    },
+    frostmourne = {
+        short       = "Frostmourne Logs",
+        full        = "Frostmourne Logs Companion",
+        slash       = "flc",     -- /alc still works everywhere as a universal alias
+        accent      = "4ec3ff",  -- shares the blue brand color
+        domain      = "frostmournelogs.gg",
+        releasesUrl = "https://github.com/FangYuanWoW/frostmourne-logs-companion/releases",
     },
 }
 
