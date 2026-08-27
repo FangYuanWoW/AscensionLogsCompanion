@@ -14,6 +14,8 @@ I.lastTickAt = 0
 I.ticker = nil         -- OnUpdate handler
 I.unitByGuid = {}      -- GUID -> unit token ("raidN"/"partyN"/"player")
 I.rosterGuids = {}     -- stable roster GUID list used by pickNext rule 1
+I.rosterUnresolved = 0 -- group slots whose UnitGUID() came back nil last rebuild
+I.rosterLastBuild = 0  -- GetTime() of the last rebuildUnitIndex()
 
 local function now()
     return GetTime()
@@ -43,10 +45,23 @@ end
 
 -- Rebuild GUID->unit and roster-guid indices from current roster state.
 -- This avoids repeated UnitGUID("raidN"/"partyN") scans on every inspect tick.
+--
+-- LOSSY BY NATURE: UnitGUID("raidN") returns nil for a group member the client
+-- has no unit data for (typically out of visible range). Such a slot cannot be
+-- added to the roster, and pickNext can ONLY ever return a GUID that is in
+-- I.rosterGuids or already in the InspectCache - so a member missed here is
+-- invisible to the inspect rotation until the next rebuild puts them in.
+--
+-- That is why we count the misses. Roster EVENTS alone are not enough to
+-- recover: a stable raid fires none, so a single unlucky read used to freeze
+-- the roster for the rest of the night (measured 2026-08-26: a 25-man where the
+-- loop cycled the same 9 peers for 7 minutes and never saw the other 15).
+-- tick() re-runs this while rosterUnresolved > 0; it self-silences at zero.
 local function rebuildUnitIndex()
     local byGuid = {}
     local roster = {}
     local seenRoster = {}
+    local unresolved = 0
     local selfGuid = UnitGUID("player")
     if selfGuid then
         byGuid[selfGuid] = "player"
@@ -61,6 +76,8 @@ local function rebuildUnitIndex()
                 roster[#roster + 1] = guid
                 seenRoster[guid] = true
             end
+        else
+            unresolved = unresolved + 1
         end
     end
 
@@ -73,11 +90,15 @@ local function rebuildUnitIndex()
                 roster[#roster + 1] = guid
                 seenRoster[guid] = true
             end
+        else
+            unresolved = unresolved + 1
         end
     end
 
     I.unitByGuid = byGuid
     I.rosterGuids = roster
+    I.rosterUnresolved = unresolved
+    I.rosterLastBuild = now()
 end
 
 -- Peer Character Advancement inspects (Ascension family only), user-toggleable
@@ -735,6 +756,22 @@ local function tick()
         end
     end
 
+    -- Roster self-heal. Nothing in the WoW event model announces "that unit is
+    -- resolvable now", so members missed by the last rebuild can only be picked
+    -- up by looking again. Cheap (one UnitGUID per group slot) and it stops on
+    -- its own the moment every slot resolves, so a healthy raid pays nothing.
+    if (I.rosterUnresolved or 0) > 0
+       and (now() - (I.rosterLastBuild or 0)) >= C.INSPECT_ROSTER_REFRESH_S then
+        local before = #(I.rosterGuids or {})
+        rebuildUnitIndex()
+        local gained = #(I.rosterGuids or {}) - before
+        if gained > 0 then
+            ALC.Core.Logger.debug(string.format(
+                "Roster refresh picked up %d member(s); %d slot(s) still unresolved.",
+                gained, I.rosterUnresolved))
+        end
+    end
+
     if I.inFlight then
         local infl = I.inFlight
         local elapsed = now() - infl.startedAt
@@ -890,6 +927,21 @@ function I.onRosterChange()
     -- unreliable when even the local player unit is unreadable.
     local pg = UnitGUID("player")
     if not pg then return end
+
+    -- Only purge when the roster read was COMPLETE. An unresolved slot is
+    -- indistinguishable from "left the group" at this level, and deleting on
+    -- the wrong guess is destructive twice over: it throws away a capture we
+    -- already paid for, and the same nil GUID also kept that member out of
+    -- I.rosterGuids, so pickNext rule 1 cannot bring them back either. The
+    -- member simply disappears from the rotation. Departures are not urgent -
+    -- the next complete read reclaims them, and until then a stale entry only
+    -- costs one InspectCache slot (LRU cap 100 vs a 40-man ceiling).
+    if (I.rosterUnresolved or 0) > 0 then
+        ALC.Core.Logger.debug(string.format(
+            "Roster incomplete (%d unresolved); skipping InspectCache purge.",
+            I.rosterUnresolved))
+        return
+    end
 
     local inRoster = { [pg] = true }
     for guid in pairs(I.unitByGuid or {}) do

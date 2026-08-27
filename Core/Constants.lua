@@ -297,7 +297,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.69.0"
+C.VERSION = "0.70.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
@@ -460,6 +460,11 @@ C.INSPECT_MIN_INTERVAL_S_BY_PROFILE = {
     triumvirate = 0.5,
 }
 C.INSPECT_TIMEOUT_S      = 5.0
+-- How often tick() may re-walk the group to recover slots whose UnitGUID() was
+-- nil at the last rebuild (see InspectLoop.rebuildUnitIndex). Only runs while
+-- some slot is still unresolved, so the steady-state cost on a fully-resolved
+-- group is zero. 5s trades a little latency for ~25 UnitGUID calls.
+C.INSPECT_ROSTER_REFRESH_S = 5.0
 C.INSPECT_RESCAN_MS      = 300000  -- 5 min (used when boss tracking pins a current boss)
 C.INSPECT_NOBOSS_RESCAN_MS = 60000   -- 1 min fallback when no boss is tracked (heroic dungeons, custom content, EncounterTracker silent failures)
 C.INSPECT_STALE_MS       = 600000  -- 10 min
