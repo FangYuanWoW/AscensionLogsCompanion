@@ -18,6 +18,8 @@ M.counters = {
     inspect_success        = 0,  -- INSPECT_TALENT_READY resolved to CI
     inspect_timeout        = 0,  -- 5s elapsed with no reply
     inspect_gate_fail      = 0,  -- CanInspect preconditions failed
+    inspect_unresolved     = 0,  -- 0.70.1: pickNext returned a GUID that resolves to no unit token, so the tick was spent on nothing. A cache holding out-of-group GUIDs shows up here first.
+    roster_refresh_gain    = 0,  -- 0.70.1: group slots recovered by the tick-driven roster rebuild (0.70.0+)
     peer_ci_received       = 0,
     peer_ci_deduped        = 0,
     boss_transitions       = 0,  -- new boss detected -> triggers re-inspect cycle
@@ -74,7 +76,16 @@ function M.report(logger)
         log("  drops: " .. c.chunks_dropped_ttl .. " TTL, " .. c.chunks_dropped_overflow .. " overflow")
     end
     log("Inspect: " .. c.inspect_success .. " success / " .. c.inspect_sent .. " sent / "
-        .. c.inspect_timeout .. " timeout / " .. c.inspect_gate_fail .. " gate-fail")
+        .. c.inspect_timeout .. " timeout / " .. c.inspect_gate_fail .. " gate-fail / "
+        .. (c.inspect_unresolved or 0) .. " unresolved")
+    local IL = ALC.Capture and ALC.Capture.InspectLoop
+    if IL then
+        local cacheN = 0
+        for _ in pairs(ALC.Capture.InspectCache.snapshot()) do cacheN = cacheN + 1 end
+        log("Roster: " .. #(IL.rosterGuids or {}) .. " tracked / "
+            .. (IL.rosterUnresolved or 0) .. " unresolved / " .. cacheN .. " cached"
+            .. " (+" .. (c.roster_refresh_gain or 0) .. " recovered)")
+    end
     if c.max_payload_len > 0 then
         log("Max chunk payload observed: " .. c.max_payload_len .. " bytes")
     end

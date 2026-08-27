@@ -11,6 +11,31 @@ local function playerGuid()
     return UnitGUID("player")
 end
 
+-- Compact inspect-loop health blob for the local CI. Reads live loop state
+-- rather than snapshotting the whole counter table: cache_size against
+-- roster_size is the pair that matters, since a cache much larger than the
+-- group is what starves the rotation.
+local function inspectMetrics()
+    local ok, out = pcall(function()
+        local c = ALC.Core.Metrics.counters
+        local IL = ALC.Capture and ALC.Capture.InspectLoop
+        local cacheN = 0
+        for _ in pairs(ALC.Capture.InspectCache.snapshot()) do cacheN = cacheN + 1 end
+        return {
+            sent            = c.inspect_sent,
+            success         = c.inspect_success,
+            timeout         = c.inspect_timeout,
+            gate_fail       = c.inspect_gate_fail,
+            unresolved      = c.inspect_unresolved,
+            roster_size     = IL and #(IL.rosterGuids or {}) or nil,
+            roster_unres    = IL and IL.rosterUnresolved or nil,
+            roster_recovered = c.roster_refresh_gain,
+            cache_size      = cacheN,
+        }
+    end)
+    return ok and out or nil
+end
+
 local function playerInfo()
     local name = UnitName("player")
     local _, classToken = UnitClass("player")
@@ -283,6 +308,16 @@ function L.buildLocalCI(sessionId)
         captured_at = time() * 1000,
         source = "local",
         is_logger = (_G.ALC_Config and ALC_Config.is_logger) and true or false,
+        -- 0.70.1: inspect-loop health, session-cumulative. LOCAL CI only -
+        -- one row per pull per logger, where the inspect CIs would multiply it
+        -- by the raid size for no extra information.
+        --
+        -- Exists because coverage ratios cannot tell the three failure modes
+        -- apart. A peer missing from a report is a gate_fail (out of range), a
+        -- timeout (asked, no reply), or was never picked at all - and those
+        -- have nothing in common as fixes. Diff two rows of the same
+        -- session_id to get the per-pull delta.
+        inspect_metrics = inspectMetrics(),
         captured_by_guid = playerGuid(),
         player = playerInfo(),
         guild  = guildInfo("player"),

@@ -766,6 +766,7 @@ local function tick()
         rebuildUnitIndex()
         local gained = #(I.rosterGuids or {}) - before
         if gained > 0 then
+            ALC.Core.Metrics.inc("roster_refresh_gain", gained)
             ALC.Core.Logger.debug(string.format(
                 "Roster refresh picked up %d member(s); %d slot(s) still unresolved.",
                 gained, I.rosterUnresolved))
@@ -802,6 +803,11 @@ local function tick()
         -- Can't resolve GUID to any unit token right now (player out of
         -- range, target lost, etc.). Defer 30s so we don't burn CPU on
         -- this entry every tick.
+        -- This tick bought nothing. Counted because a cache carrying
+        -- out-of-group GUIDs presents here and nowhere else: rules 2 and 3
+        -- keep handing them back, and the deferral written below is on
+        -- next_scan_at, which rule 2 does not consult.
+        ALC.Core.Metrics.inc("inspect_unresolved")
         local entry = ALC.Capture.InspectCache.get(nextGuid)
         if entry then
             entry.next_scan_at = time() + 30
@@ -928,21 +934,19 @@ function I.onRosterChange()
     local pg = UnitGUID("player")
     if not pg then return end
 
-    -- Only purge when the roster read was COMPLETE. An unresolved slot is
-    -- indistinguishable from "left the group" at this level, and deleting on
-    -- the wrong guess is destructive twice over: it throws away a capture we
-    -- already paid for, and the same nil GUID also kept that member out of
-    -- I.rosterGuids, so pickNext rule 1 cannot bring them back either. The
-    -- member simply disappears from the rotation. Departures are not urgent -
-    -- the next complete read reclaims them, and until then a stale entry only
-    -- costs one InspectCache slot (LRU cap 100 vs a 40-man ceiling).
-    if (I.rosterUnresolved or 0) > 0 then
-        ALC.Core.Logger.debug(string.format(
-            "Roster incomplete (%d unresolved); skipping InspectCache purge.",
-            I.rosterUnresolved))
-        return
-    end
-
+    -- The purge runs UNCONDITIONALLY. 0.70.0 skipped it whenever the roster
+    -- read was incomplete, reasoning that an unresolved slot is
+    -- indistinguishable from "left the group" so deleting is a guess. True,
+    -- but the trade was bad: with the purge suppressed the InspectCache keeps
+    -- out-of-group GUIDs, and pickNext rules 2 and 3 walk the CACHE rather
+    -- than the roster, so those entries get picked, fail to resolve, and burn
+    -- a tick each time (see the rule-2 note in pickNext - it gates on
+    -- backoff_until, which the unresolved path never sets). Raid-sized groups
+    -- have the most unresolvable slots, so they stopped purging most often;
+    -- measured 2026-08-27, first-three-pull coverage on 20+ raids fell
+    -- 11-20 points against the same loggers' own pre-0.70.0 baseline while
+    -- 5-mans were untouched. Losing one already-paid-for capture is the
+    -- cheaper mistake. See [[reference_alc_inspect_roster_index_freezes]].
     local inRoster = { [pg] = true }
     for guid in pairs(I.unitByGuid or {}) do
         inRoster[guid] = true
