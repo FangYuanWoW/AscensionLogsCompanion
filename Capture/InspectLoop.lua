@@ -359,8 +359,24 @@ local function scheduleNext(entry, outcome)
         -- would silently skip raiders for the rest of the run.
         ALC.Core.Metrics.inc("inspect_timeout")
     elseif outcome == "gate_fail" then
-        -- Not a real failure; try again soon when proximity changes
+        -- Not a real failure; try again soon when proximity changes.
+        --
+        -- backoff_until as well as next_scan_at, because those two fields are
+        -- read by different rules. pickNext rule 2 gates ONLY on
+        -- backoff_until, so with next_scan_at alone an out-of-range peer was
+        -- never actually deferred: rule 2 handed the same peer back every
+        -- tick, the range check failed again, and the tick was spent. Peers
+        -- who WERE reachable sat behind them in pairs() order, and since that
+        -- order is stable the same subset starved every cycle - which is the
+        -- shape of the reports where one raid captures the same handful of
+        -- people all night.
+        --
+        -- Per-entry, not global: only this peer steps out for 10s and the
+        -- next tick picks someone else. Measured before this change,
+        -- gate_fail ran 2.5-2.9x the number of inspects actually sent, and
+        -- the ratio rose with group size.
         entry.next_scan_at = nowSec + 10
+        entry.backoff_until = nowSec + 10
         ALC.Core.Metrics.inc("inspect_gate_fail")
     end
 end
