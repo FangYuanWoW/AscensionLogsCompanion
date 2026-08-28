@@ -361,22 +361,22 @@ local function scheduleNext(entry, outcome)
     elseif outcome == "gate_fail" then
         -- Not a real failure; try again soon when proximity changes.
         --
-        -- backoff_until as well as next_scan_at, because those two fields are
-        -- read by different rules. pickNext rule 2 gates ONLY on
-        -- backoff_until, so with next_scan_at alone an out-of-range peer was
-        -- never actually deferred: rule 2 handed the same peer back every
-        -- tick, the range check failed again, and the tick was spent. Peers
-        -- who WERE reachable sat behind them in pairs() order, and since that
-        -- order is stable the same subset starved every cycle - which is the
-        -- shape of the reports where one raid captures the same handful of
-        -- people all night.
+        -- next_scan_at ONLY. 0.70.3 also set backoff_until here, to stop
+        -- pickNext rule 2 handing the same out-of-range peer back every tick,
+        -- and it made raid coverage WORSE: pull 1 fell to 25% and even pull
+        -- 6+, steady at 94-96% across 425 encounters on every prior version,
+        -- fell to 70%. Reverted 0.70.4.
         --
-        -- Per-entry, not global: only this peer steps out for 10s and the
-        -- next tick picks someone else. Measured before this change,
-        -- gate_fail ran 2.5-2.9x the number of inspects actually sent, and
-        -- the ratio rose with group size.
+        -- The premise was wrong, not the code. Rule 3 already defers on
+        -- next_scan_at, so that change only ever touched rule 2 - and rule 2
+        -- re-picking an out-of-range peer is NOT waste. Raiders cross 28y
+        -- constantly, the distance check is cheap, and re-testing every tick
+        -- is how the loop catches someone during the second they are close
+        -- enough. A 10s lockout throws those windows away.
+        --
+        -- If the tick cost is worth attacking, skip to the NEXT candidate
+        -- within this tick instead of returning; do not defer the peer.
         entry.next_scan_at = nowSec + 10
-        entry.backoff_until = nowSec + 10
         ALC.Core.Metrics.inc("inspect_gate_fail")
     end
 end
