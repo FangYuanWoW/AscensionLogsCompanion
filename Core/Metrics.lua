@@ -18,6 +18,7 @@ M.counters = {
     inspect_success        = 0,  -- INSPECT_TALENT_READY resolved to CI
     inspect_timeout        = 0,  -- 5s elapsed with no reply
     inspect_gate_fail      = 0,  -- CanInspect preconditions failed
+    inspect_partial        = 0,  -- inspect landed but the CI was missing CAO or mystic data. A CAPTURE, not a loss - counted apart from inspect_success, which is why success/sent alone cannot be read as a failure rate.
     inspect_unresolved     = 0,  -- 0.70.1: pickNext returned a GUID that resolves to no unit token, so the tick was spent on nothing. A cache holding out-of-group GUIDs shows up here first.
     roster_refresh_gain    = 0,  -- 0.70.1: group slots recovered by the tick-driven roster rebuild (0.70.0+)
     peer_ci_received       = 0,
@@ -76,6 +77,7 @@ function M.report(logger)
         log("  drops: " .. c.chunks_dropped_ttl .. " TTL, " .. c.chunks_dropped_overflow .. " overflow")
     end
     log("Inspect: " .. c.inspect_success .. " success / " .. c.inspect_sent .. " sent / "
+        .. (c.inspect_partial or 0) .. " partial / "
         .. c.inspect_timeout .. " timeout / " .. c.inspect_gate_fail .. " gate-fail / "
         .. (c.inspect_unresolved or 0) .. " unresolved")
     local IL = ALC.Capture and ALC.Capture.InspectLoop

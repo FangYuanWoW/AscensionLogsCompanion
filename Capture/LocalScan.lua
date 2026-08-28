@@ -24,6 +24,11 @@ local function inspectMetrics()
         return {
             sent            = c.inspect_sent,
             success         = c.inspect_success,
+            -- Without this, success/sent reads as a failure rate when a
+            -- partial is a capture that simply arrived without CAO or mystic
+            -- data. 0.70.1 shipped the blob missing it and left every 49%
+            -- reading ambiguous.
+            partial         = c.inspect_partial,
             timeout         = c.inspect_timeout,
             gate_fail       = c.inspect_gate_fail,
             unresolved      = c.inspect_unresolved,
