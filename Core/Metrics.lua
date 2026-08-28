@@ -19,6 +19,7 @@ M.counters = {
     inspect_timeout        = 0,  -- 5s elapsed with no reply
     inspect_gate_fail      = 0,  -- CanInspect preconditions failed
     inspect_partial        = 0,  -- inspect landed but the CI was missing CAO or mystic data. A CAPTURE, not a loss - counted apart from inspect_success, which is why success/sent alone cannot be read as a failure rate.
+    inspect_unreachable_skip = 0, -- 0.71.0: candidate rejected at SELECTION time for range. NOT comparable to inspect_gate_fail across versions - this counts evaluations, gate_fail counts spent ticks, and pre-0.71.0 every rejection was a spent tick.
     inspect_unresolved     = 0,  -- 0.70.1: pickNext returned a GUID that resolves to no unit token, so the tick was spent on nothing. A cache holding out-of-group GUIDs shows up here first.
     roster_refresh_gain    = 0,  -- 0.70.1: group slots recovered by the tick-driven roster rebuild (0.70.0+)
     peer_ci_received       = 0,
@@ -79,7 +80,8 @@ function M.report(logger)
     log("Inspect: " .. c.inspect_success .. " success / " .. c.inspect_sent .. " sent / "
         .. (c.inspect_partial or 0) .. " partial / "
         .. c.inspect_timeout .. " timeout / " .. c.inspect_gate_fail .. " gate-fail / "
-        .. (c.inspect_unresolved or 0) .. " unresolved")
+        .. (c.inspect_unresolved or 0) .. " unresolved / "
+        .. (c.inspect_unreachable_skip or 0) .. " out-of-range skips")
     local IL = ALC.Capture and ALC.Capture.InspectLoop
     if IL then
         local cacheN = 0

@@ -266,6 +266,36 @@ end
 --   1. Roster members with no cache entry at all (first-inspect wins)
 --   2. Raiders not yet captured for the current boss (if boss known)
 --   3. Smallest next_scan_at otherwise
+-- Selection-time reachability. An out-of-range peer is not a CANDIDATE, as
+-- opposed to a candidate we pick and then abandon.
+--
+-- Until 0.71.0 pickNext chose blind and tick() discovered the peer was out of
+-- range afterwards, spent the tick, and returned. gate_fail ran 2.5-2.9x the
+-- number of inspects actually sent, rising with group size, so on a spread
+-- raid most of the loop went on rediscovering that the same people were far
+-- away while reachable peers waited behind them in stable pairs() order.
+--
+-- 0.70.3 tried to fix that by deferring the peer 10s and made raid coverage
+-- sharply worse: raiders cross 28y constantly and the lockout threw away the
+-- windows when they were close. The lesson is that re-testing often is a
+-- FEATURE; what has to go is the cost of a rejection, not its frequency.
+-- Filtering here makes a rejection a boolean instead of a tick, with no
+-- deferral, so a peer who steps into range is eligible on the very next tick.
+--
+-- Also promotes never-captured peers: previously one gate_fail created a cache
+-- entry, which demoted them out of rule 1 into the rule 2/3 crowd. Now they
+-- stay rule-1 priority until they are actually captured.
+local function reachable(guid)
+    if not guid then return false end
+    local unit = resolveUnit(guid)
+    if not unit then return false end
+    if not canInspectUnit(unit) then
+        ALC.Core.Metrics.inc("inspect_unreachable_skip")
+        return false
+    end
+    return true
+end
+
 local function pickNext()
     local cache = ALC.Capture.InspectCache.snapshot()
     local nowSec = time()
@@ -276,7 +306,7 @@ local function pickNext()
     -- raid1..raidN includes the player; CanInspect(self) returns false so
     -- attempting to inspect self burns a tick and dirties inspect_gate_fail.
     for _, guid in ipairs(I.rosterGuids or {}) do
-        if guid and not cache[guid] then
+        if guid and not cache[guid] and reachable(guid) then
             return guid
         end
     end
@@ -292,7 +322,8 @@ local function pickNext()
             if not entry.inspect_unavailable
                and (entry.backoff_until or 0) <= nowSec
                and (entry.captured_for_boss ~= currentBoss
-                    or entry.captured_for_pull_id ~= currentPullId) then
+                    or entry.captured_for_pull_id ~= currentPullId)
+               and reachable(guid) then
                 return guid
             end
         end
@@ -319,7 +350,9 @@ local function pickNext()
             end
             if nextDue <= nowSec then
                 local key = entry.next_scan_at or 0
-                if key < bestKey then
+                -- reachable() last: it is the only expensive test here, so let
+                -- the cheap ordering check reject most candidates first.
+                if key < bestKey and reachable(guid) then
                     bestKey = key
                     bestGuid = guid
                 end

@@ -31,6 +31,7 @@ local function inspectMetrics()
             partial         = c.inspect_partial,
             timeout         = c.inspect_timeout,
             gate_fail       = c.inspect_gate_fail,
+            unreach_skip    = c.inspect_unreachable_skip,
             unresolved      = c.inspect_unresolved,
             roster_size     = IL and #(IL.rosterGuids or {}) or nil,
             roster_unres    = IL and IL.rosterUnresolved or nil,
