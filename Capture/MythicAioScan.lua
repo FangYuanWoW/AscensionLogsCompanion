@@ -228,6 +228,17 @@ local function mirrorProgress()
     open.last_progress_at_ms = nowMs()
 end
 
+-- Park a snapshot under a named key in the durable store. Snapshots overwrite
+-- rather than accumulate: these are "what is true now" readings, and a history
+-- of them would grow without bound for no benefit.
+local function putSnapshot(key, value)
+    local K = ALC.Capture.KeystoneScan
+    local store = K.getStore and K.getStore()
+    if not store then return end
+    value.at_ms = nowMs()
+    store[key] = value
+end
+
 ------------------------------------------------------------------------------
 -- Handlers. Names and argument order are as observed on the wire; anything not
 -- understood is ignored rather than guessed at.
@@ -389,6 +400,31 @@ end
 -- (6 = Death Knight, 3 = Hunter, and so on). Recorded so a best carries the
 -- class that earned it.
 function H.ReceiveTotalPoints(total, scores, playerName, classId, perMap)
+    -- Freshness stamp, written every time this frame lands.
+    --
+    -- WHY THIS IS SEPARATE FROM bests: addExternalBest skips a best it already
+    -- holds, so re-harvesting an unchanged set writes NOTHING - no new row, and
+    -- no touch to the existing rows' harvested_at. A successful refresh was
+    -- therefore indistinguishable from one that never ran, both to a reader and
+    -- to anyone trying to verify the feature. This also carries the two things
+    -- the dedupe would otherwise strand: the CURRENT per-dungeon scores (a best
+    -- row freezes the score as it was when that level was first reached) and
+    -- the class id, which an existing row can never gain.
+    local snap = {
+        player      = playerName,
+        class_id    = tonumber(classId),
+        total_score = tonumber(total),
+        season      = A.season,
+        scores      = nil,
+    }
+    if type(scores) == "table" then
+        snap.scores = {}
+        for mapId, sc in pairs(scores) do
+            snap.scores[tostring(mapId)] = tonumber(sc)
+        end
+    end
+    putSnapshot("standings", snap)
+
     if type(perMap) ~= "table" then return end
     local K = ALC.Capture.KeystoneScan
     local n = 0
@@ -457,17 +493,6 @@ end
 
 ------------------------------------------------------------------------------
 -- Character-level state that belongs to no single run.
-
--- Park a snapshot under a named key in the durable store. Snapshots overwrite
--- rather than accumulate: these are "what is true now" readings, and a history
--- of them would grow without bound for no benefit.
-local function putSnapshot(key, value)
-    local K = ALC.Capture.KeystoneScan
-    local store = K.getStore and K.getStore()
-    if not store then return end
-    value.at_ms = nowMs()
-    store[key] = value
-end
 
 -- Server-wide standings. The ONLY cross-player M+ data this client can see -
 -- every Request* op is scoped to the asking character, so an arbitrary player
