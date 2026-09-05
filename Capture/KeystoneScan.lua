@@ -1164,7 +1164,16 @@ function K.start()
     -- The best-run harvest rides the same trigger (once, 8s after loading).
     reg("PLAYER_ENTERING_WORLD",         function()
         K.scheduleResumePolls()
-        if not K.externalSource then K.scheduleHarvest(8) end
+        if not K.externalSource then
+            K.scheduleHarvest(8)
+        elseif K.externalSource.scheduleLoginBestsRequest then
+            -- Same trigger, different mechanism. A client-side store can just be
+            -- read; an external source has to ask the server for it. Both land
+            -- in store.bests, so the two paths stay in step - without this, an
+            -- external source refreshed its bests only after a run and a player
+            -- who logged in without running a key never updated them at all.
+            K.externalSource.scheduleLoginBestsRequest()
+        end
     end)
 
     -- Toast fires only on confirmed landing: hook the relay's landed callback.

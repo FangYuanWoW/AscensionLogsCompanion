@@ -583,7 +583,12 @@ end
 -- pick. This is a zero-argument read of our OWN character - verified 2026-09-05
 -- by firing it on two characters in one session and getting each one's own data
 -- back. It cannot read another player and it cannot change anything.
+-- After a run, mirroring the client-side harvest's 5s. On login the wait is
+-- longer: the M+ addon is pushed by the server at login rather than loaded from
+-- disk, so asking too early reaches a client that has no AIO handler for the
+-- reply yet.
 local REQUEST_BESTS_DELAY_S = 5
+local REQUEST_BESTS_LOGIN_DELAY_S = 15
 local bestsTimer
 
 function A.requestBests()
@@ -597,16 +602,23 @@ end
 
 -- The server writes its own best record in its complete handler and the
 -- ordering against ours is undefined, so ask a beat later rather than race it.
-function A.scheduleBestsRequest()
+function A.scheduleBestsRequest(delay)
     if not A.isAvailable() then return end
     if not bestsTimer then bestsTimer = CreateFrame("Frame") end
+    local wait = tonumber(delay) or REQUEST_BESTS_DELAY_S
     local elapsed = 0
     bestsTimer:SetScript("OnUpdate", function(self, dt)
         elapsed = elapsed + dt
-        if elapsed < REQUEST_BESTS_DELAY_S then return end
+        if elapsed < wait then return end
         self:SetScript("OnUpdate", nil)
         A.requestBests()
     end)
+end
+
+-- Called from KeystoneScan's PLAYER_ENTERING_WORLD, the same trigger the
+-- client-side harvest uses.
+function A.scheduleLoginBestsRequest()
+    A.scheduleBestsRequest(REQUEST_BESTS_LOGIN_DELAY_S)
 end
 
 function A.start()
