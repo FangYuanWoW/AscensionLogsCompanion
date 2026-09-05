@@ -33,6 +33,12 @@ local C = ALC.Core.Constants
 
 K.started = false
 K.eventCounter = 0
+-- Alternate keystone source for a client whose M+ system has no Lua API
+-- (Triumvirate; see Capture/MythicAioScan.lua). When set it supplies the same
+-- shape readActiveKeystone() returns and drives the lifecycle through the
+-- external* entry points below. Init boots that module FIRST so this is
+-- populated before isAvailable() runs.
+K.externalSource = nil
 -- Latch driven by the lifecycle events. timer_state mirrors the proposed
 -- schema in the findings doc: idle -> pending -> running -> complete.
 K.state = {
@@ -85,6 +91,7 @@ end
 -- Availability + scope gate
 
 local function isAvailable()
+    if K.externalSource then return true end
     if ALC.Core.Profile.isEpochFamily() then return false end
     local ns = _G.C_MythicPlus
     return type(ns) == "table" and type(ns.IsKeystoneActive) == "function"
@@ -92,12 +99,21 @@ end
 
 function K.isKeystoneActive()
     if not isAvailable() then return false end
+    if K.externalSource then
+        local live = K.externalSource.readActive()
+        return (live and live.is_active) and true or false
+    end
     local active = callCMP("IsKeystoneActive")
     return active and true or false
 end
 
 local function shouldPublish()
     if not isAvailable() then return false end
+    -- Relay chunks are the LIVE lane and need a server-side KS demuxer for the
+    -- tenant. An external source has none yet, so its runs travel only as
+    -- durable keystone-run records via the Uploader. Drop this line to turn
+    -- the live lane on once the backend accepts it.
+    if K.externalSource then return false end
     if not _G.ALC_Config then return false end
     if ALC_Config.keystone_enabled == false then return false end
     if not ALC_Config.is_logger then return false end
@@ -110,6 +126,7 @@ end
 -- LocalScan (instanceInfo()).
 
 function K.readActiveKeystone()
+    if K.externalSource then return K.externalSource.readActive() end
     if not K.isKeystoneActive() then return nil end
 
     local out = { is_active = true }
@@ -157,7 +174,8 @@ function K.readActiveKeystone()
 end
 
 ------------------------------------------------------------------------------
--- Durable per-run records (ALC_KeystoneRuns, SavedVariablesPerCharacter).
+-- Durable per-run records (<BRAND>_KeystoneRuns, SavedVariablesPerCharacter;
+-- see Constants.KS_RUNS_VAR: ALC_ on Ascension, TLC_ on Triumvirate).
 --
 -- The KS chunks below serve LIVE logging: they ride the combat log and only
 -- exist while a logger is present. These records serve the UPLOADER: a plain
@@ -179,10 +197,10 @@ local function shouldRecordRuns()
 end
 
 local function runStore()
-    local s = _G.ALC_KeystoneRuns
+    local s = _G[C.KS_RUNS_VAR]
     if type(s) ~= "table" or type(s.runs) ~= "table" then
         s = { schema = C.KS_RUNS_SCHEMA, runs = {} }
-        _G.ALC_KeystoneRuns = s
+        _G[C.KS_RUNS_VAR] = s
     end
     s.schema = C.KS_RUNS_SCHEMA
     return s
@@ -296,29 +314,48 @@ local cleuRegistered = false
 -- read at the moment of death - it can lag one beat behind the kill (the
 -- getter may update after UNIT_DIED); informational only, name + time are
 -- the payload.
-local function recordBossKill(destName)
-    if not destName then return end
-    local BR = ALC.Zone and ALC.Zone.BossRegistry
-    local boss = BR and BR.match and BR.match(destName)
-    if not boss then return end
+--
+-- Appends one kill to the open run. Identity is `index` when the caller has one
+-- (an external wire numbers the boss within the run's own list, which is exact)
+-- and the resolved name otherwise. Dedupe follows whichever was used, so a
+-- repeated wire frame and a re-matching registry alias are both no-ops.
+local function appendBossKill(name, encDone, index)
+    if name == nil and index == nil then return end
     local _, run = findOpenRun(runStore())
     if not run then return end
     local kills = run.boss_kills
     if kills then
         for i = 1, #kills do
-            if kills[i].name == boss then return end
+            local k = kills[i]
+            if (index ~= nil and k.index == index)
+                    or (index == nil and name ~= nil and k.name == name) then
+                return
+            end
         end
     else
         kills = {}
         run.boss_kills = kills
     end
-    local entry = { at_ms = nowMs(), name = boss }
+    local entry = { at_ms = nowMs() }
+    if name ~= nil then entry.name = name end
+    if index ~= nil then entry.index = index end
+    if encDone ~= nil then entry.enc_done = encDone end
+    kills[#kills + 1] = entry
+    ALC.Core.Logger.debug("KeystoneScan boss kill: "
+        .. tostring(name or ("#" .. tostring(index))))
+end
+
+local function recordBossKill(destName)
+    if not destName then return end
+    local BR = ALC.Zone and ALC.Zone.BossRegistry
+    local boss = BR and BR.match and BR.match(destName)
+    if not boss then return end
+    local encDone
     local enc = callCMP("GetActiveKeystoneEncounters")
     if type(enc) == "table" and enc.encountersCompleted ~= nil then
-        entry.enc_done = enc.encountersCompleted
+        encDone = enc.encountersCompleted
     end
-    kills[#kills + 1] = entry
-    ALC.Core.Logger.debug("KeystoneScan boss kill: " .. boss)
+    appendBossKill(boss, encDone)
 end
 
 local function ensureCleu()
@@ -469,7 +506,7 @@ end
 -- runs), and dungeon ids here are LFGDungeons ids - a DIFFERENT id space from
 -- GetActiveKeystoneInfo().dungeonID; the backend resolves both.
 --
--- Records land in ALC_KeystoneRuns.bests, keyed so re-harvests are no-ops;
+-- Records land in the run store's .bests, keyed so re-harvests are no-ops;
 -- an improved best has a new Date and lands as a new record.
 
 local BESTS_SOFT_CAP = 800   -- guard against a pathological store; realistic counts are far lower
@@ -1008,9 +1045,87 @@ local function onComplete(a1)
             closeRunRecord(open, outcome, K.state.completed_timed, live)
         end
         -- The client writes its own best-run record in ITS complete handler
-        -- (ordering vs ours is undefined) - harvest shortly after.
-        K.scheduleHarvest(5)
+        -- (ordering vs ours is undefined) - harvest shortly after. An external
+        -- source has no such client-side store; it supplies bests directly.
+        if not K.externalSource then K.scheduleHarvest(5) end
     end
+end
+
+------------------------------------------------------------------------------
+-- External-source entry points. A source with no C_MythicPlus drives the very
+-- same lifecycle through these, so run records, roster capture, build/gear
+-- enrichment, death tracking and the FIFO cap are shared rather than
+-- reimplemented. See Capture/MythicAioScan.lua.
+
+function K.externalCountdown(seconds)
+    onCountdown(seconds)
+end
+
+-- `resumed` marks a run we joined already in progress (reconnect mid-key), so
+-- the record is stamped with an estimated start rather than a false one.
+function K.externalStarted(resumed)
+    if resumed then
+        K.state.timer_state   = "running"
+        K.state.started_at_ms = nowMs()
+        if shouldRecordRuns() then
+            local live = K.readActiveKeystone()
+            local _, open = findOpenRun(runStore())
+            if not open then openRun(true, live) end
+        end
+        return
+    end
+    onStarted()
+end
+
+function K.externalComplete(timed)
+    onComplete(timed and true or false)
+end
+
+-- Per-boss kill times from a source that witnesses kills on its own wire.
+--
+-- WHY THIS IS NOT THE COMBAT-LOG PATH: recordBossKill only credits a death
+-- whose name resolves in Zone/BossRegistry, and that registry is a RAID boss
+-- list by design (EncounterTracker uses it to spot a raid switching bosses).
+-- No 5-man dungeon boss is in it, and adding them would change raid encounter
+-- detection to fix a keystone field. An external source already receives the
+-- kill as an authoritative frame carrying the boss INDEX, so it needs neither
+-- the registry nor a combat-log witness.
+function K.externalBossKill(name, encDone, index)
+    if not shouldRecordRuns() then return end
+    appendBossKill(name, encDone, index)
+end
+
+-- The open run record, so a source can attach fields only it can know (the
+-- server's own death tally, for one).
+function K.getOpenRun()
+    if not shouldRecordRuns() then return nil end
+    local _, open = findOpenRun(runStore())
+    return open
+end
+
+-- Retroactive best-run history from a source that has its own (the Ascension
+-- path harvests the client's KeystoneBests instead; see harvestBests). Keyed so
+-- a repeated submission of an unchanged best is a no-op, and an improved best
+-- lands as a new record.
+function K.addExternalBest(rec)
+    if not shouldRecordRuns() then return 0 end
+    if type(rec) ~= "table" or not rec.kind then return 0 end
+    local store = runStore()
+    store.bests = store.bests or {}
+    local key = table.concat({
+        rec.kind, tostring(rec.dungeon_id or rec.affix_set),
+        tostring(rec.save_key), tostring(rec.level),
+        tostring(rec.season or ""),
+    }, "|")
+    if store.bests[key] then return 0 end
+    local n = 0
+    for _ in pairs(store.bests) do
+        n = n + 1
+        if n >= BESTS_SOFT_CAP then return 0 end
+    end
+    rec.harvested_at = nowMs()
+    store.bests[key] = rec
+    return 1
 end
 
 function K.start()
@@ -1028,15 +1143,20 @@ function K.start()
     local function reg(event, handler)
         pcall(ALC.RegisterEvent, event, handler)
     end
-    reg("MYTHIC_PLUS_COUNTDOWN_STARTED", function(_e, a1) onCountdown(a1) end)
-    reg("MYTHIC_PLUS_STARTED",           function() onStarted() end)
-    reg("MYTHIC_PLUS_COMPLETE",          function(_e, a1) onComplete(a1) end)
+    -- An external source delivers these three itself; the events do not exist
+    -- on such a client, and its bests come from the source, not from the
+    -- client-side KeystoneBests store harvestBests() reads.
+    if not K.externalSource then
+        reg("MYTHIC_PLUS_COUNTDOWN_STARTED", function(_e, a1) onCountdown(a1) end)
+        reg("MYTHIC_PLUS_STARTED",           function() onStarted() end)
+        reg("MYTHIC_PLUS_COMPLETE",          function(_e, a1) onComplete(a1) end)
+    end
     -- Resume/abandon detection for the durable run records: fires on login,
     -- /reload and every loading screen (the polls sort out which it was).
     -- The best-run harvest rides the same trigger (once, 8s after loading).
     reg("PLAYER_ENTERING_WORLD",         function()
         K.scheduleResumePolls()
-        K.scheduleHarvest(8)
+        if not K.externalSource then K.scheduleHarvest(8) end
     end)
 
     -- Toast fires only on confirmed landing: hook the relay's landed callback.
@@ -1093,7 +1213,7 @@ function K.probe(logger)
     end
 
     -- Durable run records (what the Uploader reads from SavedVariables).
-    local store = _G.ALC_KeystoneRuns
+    local store = _G[C.KS_RUNS_VAR]
     local runs = store and store.runs
     if runs and #runs > 0 then
         log("Run records: " .. #runs .. " stored (newest last):")

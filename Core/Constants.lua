@@ -18,7 +18,49 @@ local ADDON_NAME = ...
 C.ADDON_FOLDER = ADDON_NAME or "AscensionLogsCompanion"
 C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 
+-- Brand short code, derived from the folder the SAME way the packaging step
+-- derives it (first letter + "LC"): AscensionLogsCompanion -> ALC,
+-- TriumvirateLogsCompanion -> TLC, FrostmourneLogsCompanion -> FLC.
+C.SV_PREFIX = C.ADDON_FOLDER:sub(1, 1):upper() .. "LC"
+
+-- Name of the durable keystone-run SavedVariable.
+--
+-- WHY THIS IS DERIVED AND NOT A LITERAL: SavedVariables are declared in the
+-- .toc, which WoW reads before any Lua runs, so the packaging step stamps that
+-- line per brand. If the .toc and this string ever disagree the addon writes to
+-- a global WoW does not persist, and every captured run is lost SILENTLY on the
+-- next reload. Deriving both from the folder name makes them agree by
+-- construction (WoW already requires folder name == .toc basename, so the
+-- folder cannot drift on its own).
+--
+-- Only this variable is brand-scoped. ALC_Config and the other saved vars keep
+-- the ALC_ prefix on every brand ON PURPOSE: renaming those would orphan real
+-- user settings that already exist on disk. This one is safe to scope because
+-- no brand except Ascension has ever written it.
+C.KS_RUNS_VAR = C.SV_PREFIX .. "_KeystoneRuns"
+
 -- Version
+-- 0.72.0 (keystone runs record their boss kills and survive being abandoned):
+-- two gaps in the durable Mythic+ run record, both specific to a tenant whose
+-- keys come off the AIO wire rather than C_MythicPlus.
+-- (1) boss_kills was never written for a single run. recordBossKill credits a
+-- UNIT_DIED only when the name resolves in Zone/BossRegistry, and that registry
+-- is a RAID boss list - EncounterTracker uses it to notice a raid switching
+-- bosses - so no 5-man dungeon boss has ever been in it. Rather than widen a
+-- raid structure to fix a keystone field, MarkBossKilled now reports the kill
+-- through the new KeystoneScan.externalBossKill(). The wire is the better
+-- source anyway: it names the boss by INDEX into the run's own list, so there
+-- is no name matching and no combat-log witness to miss. Kills carry at_ms,
+-- index, name and enc_done, and dedupe on index.
+-- (2) a run closed as "abandoned" landed with no progress, no time taken and
+-- no time remaining. closeRunRecord only stamps those from a live read, and
+-- both abandon paths (a new run superseding a stale record; the final resume
+-- poll finding no live key) have none by definition - the key is gone by then.
+-- The wire handlers now mirror progress and clock onto the open record as the
+-- run moves, plus last_progress_at_ms so a reader knows how stale they are, so
+-- whatever was last true is already on the record however it closes. A normal
+-- completion still overwrites the mirror from its live read.
+-- Additive fields only; KS_RUNS_SCHEMA and SCHEMA_VERSION are unchanged.
 -- 0.68.0 (per-content-type logging gates): a new log_raids toggle (Settings
 -- panel, default ON) is the raid-side twin of log_dungeons - when off, entering
 -- a raid or a world-boss zone no longer auto-starts /combatlog, so a player who
@@ -297,7 +339,7 @@ C.MEDIA_PATH   = "Interface\\AddOns\\" .. C.ADDON_FOLDER .. "\\Media\\"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.71.0"
+C.VERSION = "0.72.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.

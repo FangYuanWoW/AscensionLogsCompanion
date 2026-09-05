@@ -118,9 +118,14 @@ local function boot()
     -- depth, so it's safe to run alongside CI + PP transit on the same
     -- SpellFailedRelay.
     safeStart("Telemetry", ALC.Capture.Telemetry)
+    -- MythicAioScan MUST start before KeystoneScan: on a client with no
+    -- C_MythicPlus it attaches itself as KeystoneScan's keystone source, and
+    -- KeystoneScan's availability check reads that on ITS start. Inert
+    -- everywhere else (Triumvirate + AIO only).
+    safeStart("MythicAioScan", ALC.Capture.MythicAioScan)
     -- KeystoneScan arms the Mythic+ lifecycle events (start/complete). It is
-    -- event-driven and Ascension-only (no-ops on Epoch where C_MythicPlus is
-    -- absent), so it's cheap to boot alongside the other capture modules.
+    -- event-driven and no-ops where neither C_MythicPlus nor an external
+    -- source exists, so it's cheap to boot alongside the other capture modules.
     safeStart("KeystoneScan", ALC.Capture.KeystoneScan)
     -- ManastormScan arms the Manastorm level-clear event (CoA only; no-ops where
     -- C_Manastorm is absent). One success record per MANASTORM_LEVEL_COMPLETED.

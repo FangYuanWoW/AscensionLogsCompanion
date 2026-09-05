@@ -16,11 +16,17 @@
 -- (ascension OR dawnrise OR darkmoon), NOT on a bare == "ascension".
 --
 -- Triumvirate is stock WotLK 3.3.5a (private server triumvirate-wow.com). It
--- shares Epoch's capture path entirely: standard talent-group (dual-spec)
--- reader, and none of Ascension's CAO / MysticEnchant / transmog / M+ API
--- surface. It is its own profile only so the backend can tenant-route by the
+-- shares Epoch's capture path for builds and gear: standard talent-group
+-- (dual-spec) reader, and none of Ascension's CAO / MysticEnchant / transmog
+-- API surface. It is its own profile so the backend can tenant-route by the
 -- snapshot's `server` tag; behaviorally it is an Epoch-family client
 -- (see P.isEpochFamily()).
+--
+-- ONE EXCEPTION, and it is easy to get wrong: Triumvirate DOES have a full
+-- Mythic+ system. It simply has no C_MythicPlus to read it with - the whole M+
+-- UI is a server-pushed AIO addon, so the data is on the addon-message wire
+-- instead of behind an API. Capture/MythicAioScan.lua reads it there. Do not
+-- infer "no M+" from isEpochFamily().
 --
 -- Detection order:
 --   1. ALC_Config.server_profile_override (manual escape hatch for forks /
