@@ -1095,6 +1095,14 @@ function K.externalBossKill(name, encDone, index)
     appendBossKill(name, encDone, index)
 end
 
+-- The durable store itself, so a source can park data that belongs to the
+-- character rather than to any single run (leaderboard snapshots, vault state).
+-- Returns nil when run recording is off, so callers must check.
+function K.getStore()
+    if not shouldRecordRuns() then return nil end
+    return runStore()
+end
+
 -- The open run record, so a source can attach fields only it can know (the
 -- server's own death tally, for one).
 function K.getOpenRun()

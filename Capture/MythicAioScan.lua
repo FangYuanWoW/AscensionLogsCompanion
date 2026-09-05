@@ -321,6 +321,9 @@ function H.StopMythicTimerGUI(remaining)
     end
     local timed = (not live.overtime) and (remaining == nil or remaining > 0)
     ALC.Capture.KeystoneScan.externalComplete(timed)
+    -- Refresh our own bests off the back of the run, so they stay current
+    -- without the player ever opening the Score tab.
+    A.scheduleBestsRequest()
     log(string.format("run complete timed=%s remaining=%s",
         tostring(timed), tostring(remaining)))
 end
@@ -381,7 +384,11 @@ end
 -- The player's own per-dungeon bests, including the full party of each. This is
 -- retroactive server history - the same role the client-side KeystoneBests
 -- harvest plays on Ascension - so it lands as "dungeon_best" records.
-function H.ReceiveTotalPoints(total, scores, playerName, _a, perMap)
+-- arg 4 is the player's CLASS ID, not a season or a rank: the server addon uses
+-- it to index a stock-WotLK class-colour table when it paints the score label
+-- (6 = Death Knight, 3 = Hunter, and so on). Recorded so a best carries the
+-- class that earned it.
+function H.ReceiveTotalPoints(total, scores, playerName, classId, perMap)
     if type(perMap) ~= "table" then return end
     local K = ALC.Capture.KeystoneScan
     local n = 0
@@ -407,6 +414,7 @@ function H.ReceiveTotalPoints(total, scores, playerName, _a, perMap)
             K.addExternalBest({
                 kind        = "dungeon_best",
                 save_key    = playerName,
+                class_id    = tonumber(classId),
                 dungeon_id  = tonumber(mapId),
                 map_id      = tonumber(mapId),
                 level       = level,
@@ -446,6 +454,160 @@ function A.onAddonMessage(prefix, message)
 end
 
 ------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+-- Character-level state that belongs to no single run.
+
+-- Park a snapshot under a named key in the durable store. Snapshots overwrite
+-- rather than accumulate: these are "what is true now" readings, and a history
+-- of them would grow without bound for no benefit.
+local function putSnapshot(key, value)
+    local K = ALC.Capture.KeystoneScan
+    local store = K.getStore and K.getStore()
+    if not store then return end
+    value.at_ms = nowMs()
+    store[key] = value
+end
+
+-- Server-wide standings. The ONLY cross-player M+ data this client can see -
+-- every Request* op is scoped to the asking character, so an arbitrary player
+-- cannot be looked up. Arrives only when the leaderboard tab is opened, so a
+-- missing snapshot means "never viewed", not "empty".
+function H.ReceiveLeaderboard(top, perMap, neutralAffix)
+    local snap = { neutral_affix = neutralAffix, season = A.season, top = {}, per_map = {} }
+    if type(top) == "table" then
+        for rank, row in pairs(top) do
+            if type(row) == "table" then
+                snap.top[#snap.top + 1] = {
+                    rank   = tonumber(rank),
+                    name   = row.name,
+                    points = tonumber(row.points),
+                }
+            end
+        end
+    end
+    if type(perMap) == "table" then
+        local n = 0
+        for mapId, info in pairs(perMap) do
+            n = n + 1
+            if n > MAX_BEST_MAPS then break end
+            if type(info) == "table" then
+                local holders
+                if type(info.keyHolderNames) == "table" then
+                    holders = {}
+                    for i = 1, #info.keyHolderNames do holders[i] = info.keyHolderNames[i] end
+                end
+                snap.per_map[tostring(mapId)] = {
+                    highest_key      = tonumber(info.highestKey),
+                    highest_key_time = tonumber(info.highestKeyDuration),
+                    holders          = holders,
+                    top_name         = info.name,
+                    top_score        = tonumber(info.score),
+                }
+            end
+        end
+    end
+    putSnapshot("leaderboard", snap)
+    log("leaderboard snapshot stored")
+end
+
+-- End-of-run loot offer. Useful beyond the items: the message carries the
+-- server's own "completed in MM:SS", an INDEPENDENT reading of the run time
+-- from a different code path than StopMythicTimerGUI's remaining-time
+-- arithmetic. It arrives while the run record is still open.
+function H.ShowRewardChoice(item1, item2, keyLevel, message, _a, _timeout)
+    local open = ALC.Capture.KeystoneScan.getOpenRun()
+    if not open then return end
+    local reward = {
+        item1     = tonumber(item1),
+        item2     = tonumber(item2),
+        key_level = tonumber(keyLevel),
+        message   = type(message) == "string" and message or nil,
+    }
+    if reward.message then
+        local mm, ss = reward.message:match("(%d+):(%d+)")
+        if mm and ss then
+            reward.completed_in_s = tonumber(mm) * 60 + tonumber(ss)
+        end
+    end
+    open.reward = reward
+    log("reward choice recorded: " .. tostring(reward.item1) .. " / "
+        .. tostring(reward.item2))
+end
+
+-- Weekly vault. Its payload shape has never been observed (it needs a pending
+-- vault to fire), so this records the arguments AS GIVEN rather than mapping
+-- them onto a schema invented from guesswork. Once a real frame lands, read it
+-- back and give the fields proper names.
+local function rawArgs(...)
+    local out, n = {}, select("#", ...)
+    for i = 1, n do
+        local v = select(i, ...)
+        local t = type(v)
+        if t == "table" then
+            local inner = {}
+            for k, vv in pairs(v) do
+                if type(vv) ~= "table" and type(vv) ~= "function" then
+                    inner[tostring(k)] = tostring(vv)
+                end
+            end
+            out[i] = inner
+        elseif t ~= "function" then
+            out[i] = tostring(v)
+        end
+    end
+    out.n = n
+    return out
+end
+
+function H.ShowVaultGUI(...)
+    putSnapshot("vault", { source = "ShowVaultGUI", args = rawArgs(...) })
+    log("vault snapshot stored (ShowVaultGUI)")
+end
+
+function H.UpdateVaultStatus(...)
+    putSnapshot("vault", { source = "UpdateVaultStatus", args = rawArgs(...) })
+    log("vault snapshot stored (UpdateVaultStatus)")
+end
+
+------------------------------------------------------------------------------
+-- Asking the server for our own standings.
+--
+-- The server's UI fires this with NO arguments when its Score tab is shown, so
+-- until now a player's bests were harvested only if they happened to open that
+-- tab. Sending it ourselves after a run keeps them current with no UI at all.
+--
+-- SCOPE, and why this does not reopen the "never send" rule: that rule exists
+-- for PedestalActivate, PedestalForfeit, MythicRewardChoice, SelectVaultItem
+-- and SelectVaultSpec, which START a key, FORFEIT a live run or SPEND a vault
+-- pick. This is a zero-argument read of our OWN character - verified 2026-09-05
+-- by firing it on two characters in one session and getting each one's own data
+-- back. It cannot read another player and it cannot change anything.
+local REQUEST_BESTS_DELAY_S = 5
+local bestsTimer
+
+function A.requestBests()
+    local AIO = _G.AIO
+    if type(AIO) ~= "table" or type(AIO.Handle) ~= "function" then return end
+    -- Literal op name, never interpolated, so this call site can only ever be
+    -- the read it says it is.
+    pcall(AIO.Handle, "AIO_Mythic", "RequestTotalPoints")
+    log("requested own total points")
+end
+
+-- The server writes its own best record in its complete handler and the
+-- ordering against ours is undefined, so ask a beat later rather than race it.
+function A.scheduleBestsRequest()
+    if not A.isAvailable() then return end
+    if not bestsTimer then bestsTimer = CreateFrame("Frame") end
+    local elapsed = 0
+    bestsTimer:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + dt
+        if elapsed < REQUEST_BESTS_DELAY_S then return end
+        self:SetScript("OnUpdate", nil)
+        A.requestBests()
+    end)
+end
 
 function A.start()
     if A.started then return end

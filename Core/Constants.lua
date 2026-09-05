@@ -40,6 +40,35 @@ C.SV_PREFIX = C.ADDON_FOLDER:sub(1, 1):upper() .. "LC"
 C.KS_RUNS_VAR = C.SV_PREFIX .. "_KeystoneRuns"
 
 -- Version
+-- 0.74.0 (Mythic+ standings keep themselves current, plus three wire frames we
+-- were throwing away). On a tenant whose M+ arrives over the AIO wire:
+--   * Own bests now refresh themselves. The server sends ReceiveTotalPoints
+--     when its Score tab is shown, so a player's per-dungeon bests were only
+--     ever captured if they happened to open that tab. We now send the same
+--     zero-argument RequestTotalPoints ourselves, five seconds after a run
+--     finishes. Verified 2026-09-05 by firing it on two characters in one
+--     session: each got its OWN data back, which is also the proof there is no
+--     way to read another player - none of the six Request* ops takes a player
+--     argument. This does NOT reopen the never-send rule, which exists for
+--     PedestalActivate / PedestalForfeit / MythicRewardChoice / SelectVaultItem
+--     / SelectVaultSpec - ops that start a key, forfeit a run or spend a vault
+--     pick. The op name is a literal at the one call site.
+--   * ReceiveLeaderboard is recorded (server-wide top N plus each dungeon's
+--     record key, time, holders and top scorer). It is the only cross-player M+
+--     data this client can see, and it only arrives when the player opens that
+--     tab - so a missing snapshot means "never viewed", not "empty".
+--   * ShowRewardChoice is recorded onto the open run: both offered item ids and
+--     the server's own "completed in MM:SS" string, which is an independent
+--     reading of the run time from a different code path than
+--     StopMythicTimerGUI's remaining-time arithmetic.
+--   * ShowVaultGUI / UpdateVaultStatus are recorded AS GIVEN. Their payload has
+--     never been observed (it needs a pending vault), so the arguments are
+--     stored raw rather than mapped onto a guessed schema; name the fields once
+--     a real frame lands.
+-- Also keeps the class id from ReceiveTotalPoints, whose fourth argument was
+-- previously discarded as unknown - it indexes the server addon's class-colour
+-- table (6 = Death Knight, 3 = Hunter), so a best now carries the class that
+-- earned it. Additive fields only; KS_RUNS_SCHEMA and SCHEMA_VERSION unchanged.
 -- 0.73.0 (the auto-logging prompt asks BEFORE it starts): entering a monitored
 -- zone used to start /combatlog and THEN ask, which made declining destructive
 -- instead of free. The client opens a NEW dated combat-log file on every
@@ -351,7 +380,7 @@ C.KS_RUNS_VAR = C.SV_PREFIX .. "_KeystoneRuns"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.73.0"
+C.VERSION = "0.74.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
