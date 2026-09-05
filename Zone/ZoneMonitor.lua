@@ -30,6 +30,7 @@ ALC.Zone.ZoneMonitor = Z
 Z.lastLoggedZone = nil
 Z.startedByUs = false
 Z.popupShownForZone = nil  -- track which zone we popped for, to avoid re-spam within the same visit
+Z.pendingZone = nil        -- zone awaiting the player's answer on the start prompt
 
 -- Popup shown when leaving a monitored zone where ALC started logging.
 -- Asks before stopping rather than auto-stopping, since players often
@@ -70,35 +71,36 @@ StaticPopupDialogs["ALC_COMBATLOG_STOP_PROMPT"] = {
 -- is currently on). The third button + warning text is added at show
 -- time only when C_Appearance.CanSeeAppearances() is true; otherwise
 -- the popup stays compact.
-StaticPopupDialogs["ALC_COMBATLOG_STARTED"] = {
+-- Consent popup. ASKS FIRST, then starts - see beginLogging()'s comment for
+-- why the order matters.
+StaticPopupDialogs["ALC_COMBATLOG_START_PROMPT"] = {
     text = "",  -- set dynamically per zone
-    button1 = "OK",
-    button2 = "Do Not Log",
+    button1 = "Start logging",
+    button2 = "Not now",
     button3 = nil,  -- set dynamically when transmog viewing is on
     OnAccept = function()
-        -- User wants to keep logging; nothing to do, addon already started it
+        local zone = Z.pendingZone
+        Z.pendingZone = nil
+        if zone then Z.beginLogging(zone) end
     end,
     OnCancel = function()
-        -- User declined for this entry. Stop logging, fully reset state so
-        -- the next zone-in to a monitored zone shows a fresh popup. We do
-        -- NOT remember the decline across zone-out + zone-back-in - the
-        -- intent is "ask me every time I come back," not "never log this
-        -- zone for the rest of the session." (v0.2.3's main-zone-only
-        -- registration ensures sub-zone walks within the same visit don't
-        -- re-fire the popup, so per-entry semantics are safe.)
-        if LoggingCombat() then
-            SlashCmdList["COMBATLOG"]("")
-            if ALC.Core.Logger then
-                ALC.Core.Logger.info("Logging stopped at user request.")
-            end
-        end
+        -- Declined for this entry. There is nothing to undo: /combatlog was
+        -- never touched, so no dated log file was created. Reset state so the
+        -- next zone-in to a monitored zone asks again. We do NOT remember the
+        -- decline across zone-out + zone-back-in - the intent is "ask me every
+        -- time I come back," not "never log this zone for the rest of the
+        -- session." (Main-zone-only registration ensures sub-zone walks within
+        -- the same visit don't re-fire the popup, so per-entry is safe.)
+        Z.pendingZone = nil
         Z.startedByUs = false
         Z.lastLoggedZone = nil
         Z.popupShownForZone = nil  -- so re-entry to a monitored zone re-prompts
     end,
     OnAlt = function()
-        -- Third button: hide transmog (preserves spell-visuals state) and
-        -- keep logging. Captures from this point onward are clean.
+        -- Third button: hide transmog (preserving the spell-visuals state) and
+        -- then start logging, so one click both consents and cleans up gear
+        -- capture. It has to start logging itself now that the popup runs
+        -- BEFORE /combatlog rather than after it.
         if _G.C_Appearance and type(C_Appearance.CanSeeAppearances) == "function"
            and type(C_Appearance.SetCanSeeAppearances) == "function" then
             local ok, _, spellVisuals = pcall(C_Appearance.CanSeeAppearances)
@@ -131,7 +133,9 @@ StaticPopupDialogs["ALC_COMBATLOG_STARTED"] = {
                 end
             end
         end
-        -- Logging continues - we don't stop it, popup just closes.
+        local zone = Z.pendingZone
+        Z.pendingZone = nil
+        if zone then Z.beginLogging(zone) end
     end,
     timeout = 0,
     whileDead = true,
@@ -227,7 +231,19 @@ local function enforceContentGate(zoneName)
     Z.startedByUs = false
     Z.lastLoggedZone = nil
     Z.popupShownForZone = nil
+    Z.pendingZone = nil
     return true
+end
+
+-- Flip /combatlog on and claim the session as ours. Split out of
+-- startLogging so the consent popup can call it on accept: the popup now runs
+-- BEFORE logging starts, so accepting is what actually starts it.
+function Z.beginLogging(zoneName)
+    if LoggingCombat() then return end
+    SlashCmdList["COMBATLOG"]("")
+    Z.lastLoggedZone = zoneName
+    Z.startedByUs = true
+    ALC.Core.Logger.info("Combat logging started for: " .. zoneName)
 end
 
 local function startLogging(zoneName, showPopup)
@@ -246,17 +262,25 @@ local function startLogging(zoneName, showPopup)
     end
     if not ALC_Config.auto_combatlog_on_raid then return end
 
-    -- Activate /combatlog
-    SlashCmdList["COMBATLOG"]("")
-    Z.lastLoggedZone = zoneName
-    Z.startedByUs = true
-    ALC.Core.Logger.info("Combat logging started for: " .. zoneName)
-
-    -- Show popup ONLY on main zone change (showPopup=true), and ONLY once
-    -- per zone entry (don't re-spam if user crosses subzones inside).
-    if showPopup and Z.popupShownForZone ~= zoneName then
+    -- ASK FIRST. Do not touch /combatlog until the player says yes.
+    --
+    -- This used to start logging and then show the popup, which made
+    -- declining destructive rather than free: the client begins a NEW dated
+    -- combat-log file on every off->on transition, so a start-then-decline
+    -- left a stub file behind holding the handful of seconds between zoning
+    -- in and clicking the button. Measured 2026-09-04 on a Mythic+ session:
+    -- 19 dated files totalling 180 KB, each spanning 2-10 seconds, because
+    -- every dungeon zone-in auto-started and was then declined. The same
+    -- client logs a raid the player says yes to as ONE continuous 195 MB
+    -- file. Asking first makes "Not now" a genuine no-op.
+    --
+    -- Show it ONLY on a main zone change (showPopup), and ONLY once per zone
+    -- entry, so crossing sub-zones inside cannot re-ask.
+    if showPopup then
+        if Z.popupShownForZone == zoneName then return end
         Z.popupShownForZone = zoneName
-        local popup = StaticPopupDialogs["ALC_COMBATLOG_STARTED"]
+        Z.pendingZone = zoneName
+        local popup = StaticPopupDialogs["ALC_COMBATLOG_START_PROMPT"]
 
         -- Detect whether the user currently has other-player transmog
         -- visible. If on, surface a warning + opt-in third button so
@@ -271,7 +295,7 @@ local function startLogging(zoneName, showPopup)
         local baseText =
             "|T" .. ALC.Core.Constants.MEDIA_PATH .. "logo-128.tga:32:32:0:0|t  " .. ALC.Core.Branding.titleRich() .. "\n" ..
             "|cff555555------------------------------|r\n" ..
-            "Starting |cffffd200/combatlog|r for:\n" ..
+            "Start |cffffd200/combatlog|r for:\n" ..
             "|cff00ffff" .. zoneName .. "|r\n\n" ..
             "Output: |cffaaaaaaLogs\\WoWCombatLog.txt|r"
 
@@ -285,8 +309,14 @@ local function startLogging(zoneName, showPopup)
             popup.button3 = nil
         end
 
-        StaticPopup_Show("ALC_COMBATLOG_STARTED")
+        StaticPopup_Show("ALC_COMBATLOG_START_PROMPT")
+        return
     end
+
+    -- No popup wanted: either silent mode, or a settings toggle was flipped
+    -- while the player is already standing in the zone. Both are an explicit
+    -- action by the player, so starting without asking is the expected result.
+    Z.beginLogging(zoneName)
 end
 
 local function stopLoggingIfWeStarted()
@@ -296,6 +326,7 @@ local function stopLoggingIfWeStarted()
     end
     Z.startedByUs = false
     Z.lastLoggedZone = nil
+    Z.pendingZone = nil
     -- Reset popup tracking so re-entering the zone shows the popup again
     Z.popupShownForZone = nil
 end

@@ -40,6 +40,18 @@ C.SV_PREFIX = C.ADDON_FOLDER:sub(1, 1):upper() .. "LC"
 C.KS_RUNS_VAR = C.SV_PREFIX .. "_KeystoneRuns"
 
 -- Version
+-- 0.73.0 (the auto-logging prompt asks BEFORE it starts): entering a monitored
+-- zone used to start /combatlog and THEN ask, which made declining destructive
+-- instead of free. The client opens a NEW dated combat-log file on every
+-- off->on transition, so start-then-decline left a stub file holding the few
+-- seconds between zoning in and clicking the button. Measured on a Mythic+
+-- session: 19 dated files totalling 180 KB, each spanning 2-10 seconds, one per
+-- dungeon zone-in that was declined - against ONE continuous 195 MB file for a
+-- raid the player accepted. The popup now runs first and "Not now" touches
+-- nothing, so a declined zone leaves no file at all. Silent mode and the
+-- settings-toggle path are unchanged: both are explicit player actions and
+-- still start immediately without asking. The third button (Hide Transmog)
+-- now starts logging as well as hiding transmog, since it is an accept.
 -- 0.72.0 (keystone runs record their boss kills and survive being abandoned):
 -- two gaps in the durable Mythic+ run record, both specific to a tenant whose
 -- keys come off the AIO wire rather than C_MythicPlus.
@@ -339,7 +351,7 @@ C.KS_RUNS_VAR = C.SV_PREFIX .. "_KeystoneRuns"
 -- of CI snapshots. Relay landed-evidence + UIErrorsFrame suppressor
 -- generalized to match the family prefix [[ALC_ so both chunk families
 -- transit cleanly through the same SPELL_CAST_FAILED hijack.
-C.VERSION = "0.72.0"
+C.VERSION = "0.73.0"
 -- Bumped to 3 in 0.2.0: snapshot header gained a `server` field
 -- ("ascension" | "epoch" | "unknown") so the backend can dispatch per-server
 -- parsing for talents / mystic / vanity.
